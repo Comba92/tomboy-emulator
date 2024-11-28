@@ -1,6 +1,8 @@
 use std::{collections::HashMap, sync::LazyLock};
 use serde::Deserialize;
 
+use crate::cpu::Cpu;
+
 #[derive(Deserialize, Debug)]
 pub struct Instruction {
   #[serde(skip)]
@@ -27,30 +29,44 @@ pub enum TargetKind {
   Address16,
   #[serde(alias = "e8")]
   Signed8,
-  A, B, C, D, E, F, H, L, N, Z,
-  AF, BC, DE, HL, SP, NZ, NC, NH,
-  #[serde(
-	alias = "$00", 
-	alias = "$08", 
-	alias = "$10",
-	alias = "$18",
-	alias = "$20",
-	alias = "$28",
-	alias = "$30",
-	alias = "$38",
-  )]
-  RST,
-  #[serde(
-	alias = "0",
-	alias = "1",
-	alias = "2",
-	alias = "3",
-	alias = "4",
-	alias = "5",
-	alias = "6",
-	alias = "7",
-  )]
-  Value
+  A, B, C, D, E, F, H, L,
+  AF, BC, DE, HL, SP,
+  N, Z,
+  NZ, NC, NH,
+
+	#[serde(alias = "$00")]
+  RST00,
+	#[serde(alias = "$08")]
+  RST08,
+	#[serde(alias = "$10")]
+  RST10,
+	#[serde(alias = "$18")]
+  RST18,
+	#[serde(alias = "$20")]
+  RST20,
+	#[serde(alias = "$28")]
+  RST28,
+	#[serde(alias = "$30")]
+  RST30,
+	#[serde(alias = "$38")]
+  RST38,
+
+	#[serde(alias = "0")]
+  Bit0,
+	#[serde(alias = "1")]
+  Bit1,
+	#[serde(alias = "2")]
+  Bit2,
+	#[serde(alias = "3")]
+  Bit3,
+	#[serde(alias = "4")]
+  Bit4,
+	#[serde(alias = "5")]
+  Bit5,
+	#[serde(alias = "6")]
+  Bit6,
+	#[serde(alias = "7")]
+  Bit7,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -58,7 +74,9 @@ pub struct InstrTarget {
   #[serde(alias = "name")]
   pub kind: TargetKind,
   pub immediate: bool,
+  #[serde(default)]
   pub increment: bool,
+  #[serde(default)]
   pub decrement: bool,
 }
 
@@ -70,14 +88,15 @@ struct InstrGroups {
 }
 
 fn get_instructions() -> [Instruction; 256 * 2] {
-	let json = include_str!("instr.json");
+	let json = include_str!("../utils/instr.json");
   let parsed: InstrGroups = serde_json
-	::from_str(json)
-	.unwrap();
+	  ::from_str(json)
+	  .unwrap();
   
   let mut flattened = Vec::new();
-  let chained_iter = parsed.unprefixed.iter()
-	.chain(parsed.cbprefixed.iter());
+  let chained_iter = parsed.unprefixed
+    .iter()
+	  .chain(parsed.cbprefixed.iter());
 
   for (opcode_str, instr) in chained_iter {
 	let opcode = u8
