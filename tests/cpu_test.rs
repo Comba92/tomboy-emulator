@@ -8,17 +8,16 @@ mod cpu_tests {
   #[test]
   fn run_test() {
     let mut cpu = Cpu::new();
-    cpu.pc = 0x101;
+    cpu.pc = 0x100;
 
-    let rom = std::fs::read("./tests/roms/06-ld r,r.gb").unwrap();
+    let rom = std::fs::read("./tests/roms/03-op sp,hl.gb").unwrap();
     let cart = Cart::new(&rom).unwrap();
     println!("{:?}", cart);
   
-    let mut log_lines = include_str!("./logs/6.txt").lines();
+    let mut log_lines = include_str!("logs/3.txt").lines();
 
     let (left, _) = cpu.mem.split_at_mut(rom.len());
     left.copy_from_slice(&rom);
-  
     
     for i in 0..243272 {
       let mine = log_cpu(&mut cpu);
@@ -28,22 +27,23 @@ mod cpu_tests {
       
       if mine != log {
         let diff = prettydiff
-          ::diff_words(&mine, log);
-
+        ::diff_words(&mine, log);
+        
+        println!("{:?}", cpu);
         println!("{diff}\n{i} lines executed");
         panic!()
-      }
-
+      }      
+      
       println!("{}\nLast OP {:02X}: {}", mine, op, INSTRUCTIONS[op as usize].name);
       cpu.step();
     }
   }
   
   fn log_cpu(cpu: &mut Cpu) -> String {
-    let b0 = cpu.read(cpu.pc);
-    let b1 = cpu.read(cpu.pc+1);
-    let b2 = cpu.read(cpu.pc+2);
-    let b3 = cpu.read(cpu.pc+3);
+    let b0 = cpu.peek(cpu.pc);
+    let b1 = cpu.peek(cpu.pc+1);
+    let b2 = cpu.peek(cpu.pc+2);
+    let b3 = cpu.peek(cpu.pc+3);
 
     format!("\
       A: {:02X} F: {:02X} B: {:02X} C: {:02X} D: {:02X} E: {:02X} \

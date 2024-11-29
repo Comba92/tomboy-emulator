@@ -1,17 +1,18 @@
 use core::str;
 use std::{collections::HashMap, sync::LazyLock};
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct Cart {
-    title: String,
-    cgb_mode: CgbMode,
-    licensee_new: &'static str,
-    sgb_support: bool,
     cart_type: &'static str,
+    title: String,
+    licensee: &'static str,
+    licensee_new: &'static str,
+    region: Region,
+    cgb_mode: CgbMode,
+    sgb_support: bool,
     rom_size: usize,
     ram_size: usize,
-    region: Region,
-    licensee: &'static str,
     version: u8,
     checksum: u8,
 }
