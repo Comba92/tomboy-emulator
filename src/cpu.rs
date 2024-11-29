@@ -1,4 +1,4 @@
-use std::ops::Not;
+use std::ops::{Neg, Not};
 
 use bitfield_struct::bitfield;
 use bitflags::bitflags;
@@ -61,6 +61,29 @@ impl Cpu {
 	fn set_af(&mut self, val: u16) {
 		self.a = (val >> 8) as u8;
 		self.f = Flags::from_bits_retain(val as u8 & 0xFF)
+	}
+
+	fn set_carry(&mut self, val: u16) {
+		self.f.set(Flags::c, val > u8::MAX as u16);
+	}
+
+	fn set_carry16(&mut self, val: u32) {
+		self.f.set(Flags::c, val > u16::MAX as u32);
+	}
+
+	fn set_hcarry(&mut self, a: u8, b: u8) {
+		// TODO: obviously not working
+		let res = ((a & 0xF) + (b & 0xF)) & 0x10 != 0;
+		self.f.set(Flags::h, res);
+	}
+
+	fn set_hcarry16(&mut self, a: u16, b: u16) {
+		let res = ((a & 0xFFF) + (b & 0xFFF)) & 0x1000 != 0;
+		self.f.set(Flags::h, res);
+	}
+
+	fn set_z(&mut self, val: u16) {
+		self.f.set(Flags::z, val == 0);
 	}
 
 	pub fn read(&mut self, addr: u16) -> u8 {
@@ -368,34 +391,39 @@ impl Cpu {
 	// 0xf8
 	fn ldrel(&mut self, op: &[InstrTarget]) {
 		let offset = self.get_operand(&op[1]) as i8;
-		let val = self.sp.wrapping_add_signed(offset as i16);
-		self.set_result16(&op[0], val);
-
+		let (res, carry) = self.sp.overflowing_add_signed(offset as i16);
+		
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
-		// TODO: set flags h c
-
+		self.f.set(Flags::c, carry);
+		self.set_hcarry16(self.sp, offset as u16);
+		
+		self.set_result16(&op[0], res);
 		self.tick();
 	}
 
 	fn add(&mut self, op: &[InstrTarget]) {
 		let val = self.get_operand(&op[0]);
 		let res = self.a as u16 + val as u16;
-		self.a = res as u8;
-		self.f.set(Flags::z, res == 0);
+		
+		self.set_z(res);
 		self.f.remove(Flags::n);
-		// TODO set flag h
-		self.f.set(Flags::c, res > u8::MAX as u16);
+		self.set_carry(res);
+		self.set_hcarry(self.a, val);
+
+		self.a = res as u8;
 	}
 
 	fn adc(&mut self, op: &[InstrTarget]) {
 		let val = self.get_operand(&op[0]);
 		let res = self.a as u16 + val as u16 + self.f.contains(Flags::c) as u16; 
-		self.a = res as u8;
-		self.f.set(Flags::z, res == 0);
+		
+		self.set_z(res);
 		self.f.remove(Flags::n);
-		// TODO set flag h
-		self.f.set(Flags::c, res > u8::MAX as u16);
+		self.set_carry(res);
+		self.set_hcarry(self.a, val);
+		
+		self.a = res as u8;
 	}
 
 	fn sub(&mut self, op: &[InstrTarget]) {
@@ -411,62 +439,70 @@ impl Cpu {
 	}
 
 	fn inc(&mut self, op: &[InstrTarget]) {
-		let val = self.get_operand(&op[0]).wrapping_add(1);
-		self.set_result(&op[0], val);
-		self.f.set(Flags::z, val == 0);
+		let val = self.get_operand(&op[0]);
+		let res = val.wrapping_add(1);
+		
+		self.set_z(res as u16);
 		self.f.remove(Flags::n);
-		// TODO: set flag h
+		self.set_hcarry(val, 1);
+
+		self.set_result(&op[0], res);
 	}
 
 	fn inc16(&mut self, op: &[InstrTarget]) {
-		let val = self.get_operand16(&op[0]).wrapping_add(1);
-		self.set_result16(&op[0], val);
-		self.f.set(Flags::z, val == 0);
-		self.f.remove(Flags::n);
-		// TODO: set flag h
+		let val = self.get_operand16(&op[0]);
+		let res = val.wrapping_add(1);
+		self.set_result16(&op[0], res);
 	}
 
 	fn dec(&mut self, op: &[InstrTarget]) {
-		let val = self.get_operand(&op[0]).wrapping_sub(1);
-		self.set_result(&op[0], val);
-		self.f.set(Flags::z, val == 0);
+		let val = self.get_operand(&op[0]);
+		let res = val.wrapping_sub(1);
+		
+		self.f.set(Flags::z, res == 0);
 		self.f.insert(Flags::n);
-		// TODO: set flag h
+		self.set_hcarry(val, !1 + 1);
+
+		self.set_result(&op[0], res);
 	}
 
 	fn dec16(&mut self, op: &[InstrTarget]) {
-		let val = self.get_operand16(&op[0]).wrapping_sub(1);
-		self.set_result16(&op[0], val);
-		self.f.set(Flags::z, val == 0);
-		self.f.insert(Flags::n);
-		// TODO: set flag h
+		let val = self.get_operand16(&op[0]);
+		let res = val.wrapping_sub(1);
+		self.set_result16(&op[0], res);
 	}
 
 	fn and(&mut self, op: &[InstrTarget]) {
 		let val = self.get_operand(&op[0]);
-		self.a &= val;
-		self.f.set(Flags::z, val == 0);
+		
+		self.set_z(val as u16);
 		self.f.remove(Flags::n);
 		self.f.insert(Flags::h);
 		self.f.remove(Flags::c);
+
+		self.a &= val;
 	}
 
 	fn or(&mut self, op: &[InstrTarget]) {
 		let val = self.get_operand(&op[0]);
-		self.a |= val;
-		self.f.set(Flags::z, val == 0);
+		
+		self.set_z(val as u16);
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.remove(Flags::c);
+
+		self.a |= val;
 	}
 
 	fn xor(&mut self, op: &[InstrTarget]) {
 		let val = self.get_operand(&op[0]);
-		self.a ^= val;
-		self.f.set(Flags::z, val == 0);
+		
+		self.set_z(val as u16);
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.remove(Flags::c);
+		
+		self.a ^= val;
 	}
 
 	fn ccf(&mut self) {
@@ -514,6 +550,7 @@ impl Cpu {
 		self.tick();
 	}
 
+	// 0xe9
 	fn jphl(&mut self) {
 		self.pc = self.hl.0;
 	}
@@ -593,7 +630,8 @@ impl Cpu {
 
 impl Cpu {
   fn execute_no_prefix(&mut self, instr: &Instruction) {
-    match instr.opcode {
+    let ops = &instr.operands;
+	match instr.opcode {
       0x0 => self.nop(),
       0x02 | 0x06 | 0x08 | 0x0a | 0x0e | 0x12 | 0x16 | 0x1a | 0x1e |
 	  0x22 | 0x26 | 0x2a | 0x2e | 0x32 | 0x36 | 0x3a | 0x3e | 0x40 | 0x41 | 0x42 | 
@@ -602,54 +640,65 @@ impl Cpu {
       0x5b | 0x5c | 0x5d | 0x5e | 0x5f | 0x60 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65 | 0x66 |
       0x67 | 0x68 | 0x69 | 0x6a | 0x6b | 0x6c | 0x6d | 0x6e | 0x6f | 0x70 | 0x71 | 0x72 |
       0x73 | 0x74 | 0x75 | 0x77 | 0x78 | 0x79 | 0x7a | 0x7b | 0x7c | 0x7d | 0x7e | 0x7f |
-      0xe2 | 0xea | 0xf2 | 0xfa => self.ld(&instr.operands),
-	  0x01 | 0x11 | 0x21 | 0x31 => self.ld16(&instr.operands),
-	  0xf8 => self.ldrel(&instr.operands),
+      0xe2 | 0xea | 0xf2 | 0xfa => self.ld(ops),
+	  0x01 | 0x11 | 0x21 | 0x31 => self.ld16(ops),
+	  0xf8 => self.ldrel(ops),
 	  0xf9 => self.ldsp(),
-      0x3 | 0x4 | 0xc | 0x13 | 0x14 | 0x1c | 0x23 | 0x24 | 0x2c | 0x33 | 0x34 | 0x3c => self.inc(&instr.operands),
-      0x5 | 0xb | 0xd | 0x15 | 0x1b | 0x1d | 0x25 | 0x2b | 0x2d | 0x35 | 0x3b | 0x3d => self.dec(&instr.operands),
-      0x7 => self.rlca(&instr.operands),
+      0x3 | 0x4 | 0xc | 0x13 | 0x14 | 0x1c | 0x23 | 0x24 |
+	  0x2c | 0x33 | 0x34 | 0x3c => self.inc(ops),
+      0x5 | 0xb | 0xd | 0x15 | 0x1b | 0x1d | 0x25 | 0x2b |
+	  0x2d | 0x35 | 0x3b | 0x3d => self.dec(ops),
+      0x7 => self.rlca(ops),
       0x9 | 0x19 | 0x29 | 0x39 | 0x80 | 0x81 | 0x82 | 0x83 |
-      0x84 | 0x85 | 0x86 | 0x87 | 0xc6 | 0xe8 => self.add(&instr.operands),
-      0xf => self.rrca(&instr.operands),
-      0x10 => self.stop(&instr.operands),
-      0x17 => self.rla(&instr.operands),
-      0x18 | 0x20 | 0x28 | 0x30 | 0x38 => self.jr(&instr.operands),
-      0x1f => self.rra(&instr.operands),
-      0x27 => self.daa(&instr.operands),
+      0x84 | 0x85 | 0x86 | 0x87 | 0xc6 | 0xe8 => self.add(ops),
+      0xf => self.rrca(ops),
+      0x10 => self.stop(ops),
+      0x17 => self.rla(ops),
+	  0x18 => self.jr(ops),
+      0x20 | 0x28 | 0x30 | 0x38 => self.jrc(ops),
+      0x1f => self.rra(ops),
+      0x27 => self.daa(ops),
       0x2f => self.cpl(),
       0x37 => self.scf(),
       0x3f => self.ccf(),
-      0x76 => self.halt(&instr.operands),
-      0x88 | 0x89 | 0x8a | 0x8b | 0x8c | 0x8d | 0x8e | 0x8f | 0xce => self.adc(&instr.operands),
-      0x90 | 0x91 | 0x92 | 0x93 | 0x94 | 0x95 | 0x96 | 0x97 | 0xd6 => self.sub(&instr.operands),
-      0x98 | 0x99 | 0x9a | 0x9b | 0x9c | 0x9d | 0x9e | 0x9f | 0xde => self.sbc(&instr.operands),
-      0xa0 | 0xa1 | 0xa2 | 0xa3 | 0xa4 | 0xa5 | 0xa6 | 0xa7 | 0xe6 => self.and(&instr.operands),
-      0xa8 | 0xa9 | 0xaa | 0xab | 0xac | 0xad | 0xae | 0xaf | 0xee => self.xor(&instr.operands),
-      0xb0 | 0xb1 | 0xb2 | 0xb3 | 0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xf6 => self.or(&instr.operands),
-      0xb8 | 0xb9 | 0xba | 0xbb | 0xbc | 0xbd | 0xbe | 0xbf | 0xfe => self.cp(&instr.operands),
-      0xc0 | 0xc8 | 0xc9 | 0xd0 | 0xd8 => self.ret(),
-      0xc1 | 0xd1 | 0xe1 | 0xf1 => self.pop(&instr.operands),
-      0xc2 | 0xc3 | 0xca | 0xd2 | 0xda | 0xe9 => self.jp(&instr.operands),
-      0xc4 | 0xcc | 0xcd | 0xd4 | 0xdc => self.call(&instr.operands),
-      0xc5 | 0xd5 | 0xe5 | 0xf5 => self.push(&instr.operands),
-      0xc7 | 0xcf | 0xd7 | 0xdf | 0xe7 | 0xef | 0xf7 | 0xff => self.rst(&instr.operands),
+      0x76 => self.halt(ops),
+      0x88 | 0x89 | 0x8a | 0x8b | 0x8c | 0x8d | 0x8e | 0x8f | 0xce => self.adc(ops),
+      0x90 | 0x91 | 0x92 | 0x93 | 0x94 | 0x95 | 0x96 | 0x97 | 0xd6 => self.sub(ops),
+      0x98 | 0x99 | 0x9a | 0x9b | 0x9c | 0x9d | 0x9e | 0x9f | 0xde => self.sbc(ops),
+      0xa0 | 0xa1 | 0xa2 | 0xa3 | 0xa4 | 0xa5 | 0xa6 | 0xa7 | 0xe6 => self.and(ops),
+      0xa8 | 0xa9 | 0xaa | 0xab | 0xac | 0xad | 0xae | 0xaf | 0xee => self.xor(ops),
+      0xb0 | 0xb1 | 0xb2 | 0xb3 | 0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xf6 => self.or(ops),
+      0xb8 | 0xb9 | 0xba | 0xbb | 0xbc | 0xbd | 0xbe | 0xbf | 0xfe => self.cp(ops),
+      0xc9 => self.ret(),
+	  0xc0 | 0xc8 | 0xd0 | 0xd8 => self.retc(ops),
+	  0xd9 => self.reti(),
+      0xc1 | 0xd1 | 0xe1 | 0xf1 => self.pop(ops),
+      0xc3 => self.jp(ops),
+	  0xc2 | 0xd2 | 0xca | 0xda => self.jpc(ops),
+	  0xe9 => self.jphl(),
+	  0xcd => self.call(ops),
+      0xc4 | 0xcc | 0xd4 | 0xdc => self.callc(ops),
+      0xc5 | 0xd5 | 0xe5 | 0xf5 => self.push(ops),
+      0xc7 | 0xcf | 0xd7 | 0xdf | 0xe7 | 0xef | 0xf7 | 0xff => self.rst(ops),
+	  0xf3 => self.di(),
+	  0xfb => self.ei(),
 	  _ => todo!("{}: {} not reachable", instr.opcode, instr.name)
     }
   }
 
 	fn execute_prefix(&mut self, instr: &Instruction) {
+		let ops = &instr.operands;
 		match instr.opcode {
-			0x08 ..= 0x0f => self.rrc(&instr.operands),
-			0x10 ..= 0x17 => self.rl(&instr.operands),
-			0x18 ..= 0x1f => self.rr(&instr.operands),
-			0x20 ..= 0x27 => self.sla(&instr.operands),
-			0x28 ..= 0x2f => self.sra(&instr.operands),
-			0x30 ..= 0x37 => self.swap(&instr.operands),
-			0x38 ..= 0x3f => self.srl(&instr.operands),
-			0x40 ..= 0x7f => self.bit(&instr.operands),
-			0x80 ..= 0xbf => self.res(&instr.operands),
-			0xc0 ..= 0xff => self.set(&instr.operands),
+			0x08 ..= 0x0f => self.rrc(ops),
+			0x10 ..= 0x17 => self.rl(ops),
+			0x18 ..= 0x1f => self.rr(ops),
+			0x20 ..= 0x27 => self.sla(ops),
+			0x28 ..= 0x2f => self.sra(ops),
+			0x30 ..= 0x37 => self.swap(ops),
+			0x38 ..= 0x3f => self.srl(ops),
+			0x40 ..= 0x7f => self.bit(ops),
+			0x80 ..= 0xbf => self.res(ops),
+			0xc0 ..= 0xff => self.set(ops),
 			_ => todo!("{}: {} not reachable", instr.opcode, instr.name)
 		}
 	}

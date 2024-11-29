@@ -20,7 +20,7 @@ mod cpu_tests {
     left.copy_from_slice(&rom);
   
     
-    for _ in 0..1000 {
+    for i in 0..243272 {
       let mine = log_cpu(&mut cpu);
       let log = log_lines.next().unwrap();
       
@@ -30,7 +30,7 @@ mod cpu_tests {
         let diff = prettydiff
           ::diff_words(&mine, log);
 
-        println!("{diff}");
+        println!("{diff}\n{i} lines executed");
         panic!()
       }
 
