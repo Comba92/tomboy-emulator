@@ -1,8 +1,6 @@
 use std::{collections::HashMap, sync::LazyLock};
 use serde::Deserialize;
 
-use crate::cpu::Cpu;
-
 #[derive(Deserialize, Debug)]
 pub struct Instruction {
   #[serde(skip)]
@@ -93,30 +91,49 @@ fn get_instructions() -> [Instruction; 256 * 2] {
 	  ::from_str(json)
 	  .unwrap();
   
-  let mut flattened = Vec::new();
-  let chained_iter = parsed.unprefixed
-    .iter()
-	  .chain(parsed.cbprefixed.iter());
+  let mut unprefixed = Vec::new();
+  let mut cbprefixed = Vec::new();
 
-  for (opcode_str, instr) in chained_iter {
-	let opcode = u8
-	  ::from_str_radix(opcode_str.strip_prefix("0x").unwrap(), 16)
-	  .unwrap();
+  for (opcode_str, instr) in parsed.unprefixed {
+    let opcode = u8
+      ::from_str_radix(opcode_str.strip_prefix("0x").unwrap(), 16)
+      .unwrap();
 
-	let instr = Instruction {
-	  opcode,
-	  name: instr.name,
-	  bytes: instr.bytes,
-	  cycles: instr.cycles.clone(),
-	  immediate: instr.immediate,
-	  prefix: parsed.cbprefixed.contains_key(opcode_str),
-	  operands: instr.operands.clone(),
-	};
-
-	flattened.push(instr);
+    let instr = Instruction {
+      opcode,
+      name: instr.name,
+      bytes: instr.bytes,
+      cycles: instr.cycles.clone(),
+      immediate: instr.immediate,
+      prefix: false,
+      operands: instr.operands.clone(),
+    };
+    unprefixed.push(instr);
   }
 
-  flattened.try_into().unwrap()
+  for (opcode_str, instr) in parsed.cbprefixed {
+    let opcode = u8
+      ::from_str_radix(opcode_str.strip_prefix("0x").unwrap(), 16)
+      .unwrap();
+
+    let instr = Instruction {
+      opcode,
+      name: instr.name,
+      bytes: instr.bytes,
+      cycles: instr.cycles.clone(),
+      immediate: instr.immediate,
+      prefix: true,
+      operands: instr.operands.clone(),
+    };
+
+    cbprefixed.push(instr);
+  }
+  
+  unprefixed.sort_by(|a, b| a.opcode.cmp(&b.opcode));
+  cbprefixed.sort_by(|a, b| a.opcode.cmp(&b.opcode));
+
+  unprefixed.append(&mut cbprefixed);
+  unprefixed.try_into().unwrap()
 }
 
 pub static INSTRUCTIONS: LazyLock<[Instruction; 256*2]> = LazyLock::new(get_instructions);
@@ -129,6 +146,6 @@ mod instr_tests {
   fn parse_test() {
 	let flattened = get_instructions();
 
-	println!("{:?}", flattened);
+	println!("{:#?}", flattened);
   }
 }

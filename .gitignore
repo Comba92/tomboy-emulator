@@ -1,2 +1,4 @@
 /target
 /roms
+/tests/roms
+/tests/logs

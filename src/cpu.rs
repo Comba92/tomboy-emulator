@@ -1,6 +1,3 @@
-// TODO: remove this
-#![allow(unused)]
-
 use std::ops::Not;
 
 use bitfield_struct::bitfield;
@@ -22,9 +19,9 @@ bitflags! {
 #[bitfield(u16)]
 pub struct Register16 {
 	#[bits(8)]
-	pub hi: u8,
+	pub lo: u8,
 	#[bits(8)]
-	pub lo: u8
+	pub hi: u8,
 }
 
 pub struct Cpu {
@@ -101,6 +98,13 @@ impl Cpu {
 	}
 
 	pub fn step(&mut self) {
+		if self.ime_to_set {
+			self.ime = true;
+			self.ime_to_set = false;
+		} else if self.ime {
+			// handle interrupts
+		}
+
 		let opcode = self.fetch_pc();
 		
 		if opcode == 0xCB {
@@ -115,22 +119,11 @@ impl Cpu {
 
 	fn get_operand(&mut self, target: &InstrTarget) -> u8 {
 		match (&target.kind, target.immediate) {
-			(TargetKind::Immediate8 | TargetKind::Signed8, _) => self.fetch_pc(),
-			(TargetKind::Immediate16, _) => {
-				let addr = u16::from_le_bytes([
-					self.fetch_pc(), self.fetch_pc(),
-				]);
-				self.read(addr)
-			}
-			(TargetKind::Address8, false) => {
+			(TargetKind::Immediate8 | TargetKind::Signed8, _) |
+			(TargetKind::Address8, false) => self.fetch_pc(),
+			(TargetKind::Address8, true) => {
 				let addr = u16::from_be_bytes([
 					0xFF, self.fetch_pc()
-				]);
-				self.read(addr)
-			}
-			(TargetKind::Address16, true) => {
-				let addr = u16::from_le_bytes([
-					self.fetch_pc(), self.fetch_pc()
 				]);
 				self.read(addr)
 			}
@@ -138,8 +131,7 @@ impl Cpu {
 				let addr = u16::from_le_bytes([
 					self.fetch_pc(), self.fetch_pc()
 				]);
-				let lookup = self.read16(addr);
-				self.read(lookup)
+				self.read(addr)
 			}
 			(TargetKind::A, _) => self.a,
 			(TargetKind::B, _) => self.bc.hi(),
@@ -163,12 +155,29 @@ impl Cpu {
 				else if target.decrement { self.hl.0 = self.hl.0.wrapping_sub(1); }
 				res
 			}
-			_ => todo!()
+			_ => todo!("{:?}", target.kind),
 		}
 	}
 
 	fn get_operand16(&mut self, target: &InstrTarget) -> u16 {
 		match (&target.kind, target.immediate) {
+			(TargetKind::Address8, false) => {
+				let addr = u16::from_be_bytes([
+					0xFF, self.fetch_pc()
+				]);
+				self.read16(addr)
+			}
+			(TargetKind::Immediate16, _) | (TargetKind::Address16, true) => {
+				u16::from_le_bytes([
+					self.fetch_pc(), self.fetch_pc(),
+				])
+			}
+			(TargetKind::Address16, false) => {
+				let addr = u16::from_le_bytes([
+					self.fetch_pc(), self.fetch_pc()
+				]);
+				self.read16(addr)
+			}
 			(TargetKind::SP, _) => self.sp,
 			(TargetKind::AF, _) => self.af(),
 			(TargetKind::BC, true)  => self.bc.0,
@@ -182,13 +191,19 @@ impl Cpu {
 				else if target.decrement { self.hl.0 = self.hl.0.wrapping_sub(1); }
 				res
 			}
-			_ => todo!()
+			_ => todo!("{:?}", target.kind),
 		}
 	}
 
 	fn set_result(&mut self, target: &InstrTarget, val: u8) {
 		match (&target.kind, target.immediate) {
 		(TargetKind::Address8, false) => {
+			let addr = u16::from_le_bytes([
+				0xFF, self.fetch_pc()
+			]);
+			self.write(addr, val)
+		}
+		(TargetKind::Address8, true) => {
 			let addr = u16::from_le_bytes([
 				0xFF, self.fetch_pc()
 			]);
@@ -221,12 +236,22 @@ impl Cpu {
 		(TargetKind::F, _) => self.f = Flags::from_bits_retain(val as u8),
 		(TargetKind::H, _) => self.hl.set_hi(val as u8),
 		(TargetKind::L, _) => self.hl.set_lo(val as u8),
+		(TargetKind::BC, false) => {
+			self.write(self.bc.0, val);
+			if target.increment { self.bc.0 = self.bc.0.wrapping_add(1); }
+			else if target.decrement { self.bc.0 = self.bc.0.wrapping_sub(1); }
+		}
+		(TargetKind::DE, false) => {
+			self.write(self.de.0, val);
+			if target.increment { self.de.0 = self.de.0.wrapping_add(1); }
+			else if target.decrement { self.de.0 = self.de.0.wrapping_sub(1); }
+		}
 		(TargetKind::HL, false) => {
 			self.write(self.hl.0, val);
 			if target.increment { self.hl.0 = self.hl.0.wrapping_add(1); }
 			else if target.decrement { self.hl.0 = self.hl.0.wrapping_sub(1); }
 		}
-		_ => todo!()
+		_ => todo!("{:?}", target.kind),
 		}
 	}
 
@@ -260,7 +285,7 @@ impl Cpu {
 			(TargetKind::DE, true) => self.de.0 = val,
 			(TargetKind::DE, false) => self.write16(self.de.0, val),
 			(TargetKind::HL, true)  => self.hl.0 = val,
-			_ => todo!()
+			_ => todo!("{:?}", target.kind),
 		}
 	}
 
@@ -275,7 +300,7 @@ impl Cpu {
 			TargetKind::NC => !self.f.contains(Flags::c),
 			TargetKind::NH => !self.f.contains(Flags::h),
 
-			_ => todo!()
+			_ => todo!("{:?}", flag.kind),
 		}
 	}
 
@@ -311,33 +336,22 @@ impl Cpu {
 
 
 impl Cpu {
-	fn nop(&mut self, op: &[InstrTarget]) { todo!() }
+	fn nop(&mut self) { todo!() }
 
 	fn ld(&mut self, op: &[InstrTarget]) {
-		let val = self.get_operand(&op[0]);
-		self.set_result(&op[1], val);
+		let val = self.get_operand(&op[1]);
+		self.set_result(&op[0], val);
 		self.tick();
 	}
 
 	fn ld16(&mut self, op: &[InstrTarget]) {
-		let val = self.get_operand16(&op[0]);
-		self.set_result16(&op[1], val);
+		let val = self.get_operand16(&op[1]);
+		self.set_result16(&op[0], val);
 	}
 
+	// 0xf9
 	fn ldsp(&mut self) {
 		self.sp = self.hl.0;
-		self.tick();
-	}
-
-	fn ldrel(&mut self, op: &[InstrTarget]) {
-		let offset = self.get_operand(&op[0]) as i8;
-		let val = self.sp.wrapping_add_signed(offset as i16);
-		self.set_result16(&op[1], val);
-
-		self.f.remove(Flags::z);
-		self.f.remove(Flags::n);
-		// TODO: set flags h c
-
 		self.tick();
 	}
 
@@ -349,6 +363,19 @@ impl Cpu {
 	fn pop(&mut self, op: &[InstrTarget]) {
 		let val = self.stack_pop();
 		self.set_result16(&op[0], val);
+	}
+
+	// 0xf8
+	fn ldrel(&mut self, op: &[InstrTarget]) {
+		let offset = self.get_operand(&op[1]) as i8;
+		let val = self.sp.wrapping_add_signed(offset as i16);
+		self.set_result16(&op[0], val);
+
+		self.f.remove(Flags::z);
+		self.f.remove(Flags::n);
+		// TODO: set flags h c
+
+		self.tick();
 	}
 
 	fn add(&mut self, op: &[InstrTarget]) {
@@ -442,13 +469,13 @@ impl Cpu {
 		self.f.remove(Flags::c);
 	}
 
-	fn ccf(&mut self, op: &[InstrTarget]) {
+	fn ccf(&mut self) {
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.toggle(Flags::c);
 	}
 
-	fn scf(&mut self, op: &[InstrTarget]) {
+	fn scf(&mut self) {
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.insert(Flags::c);
@@ -456,7 +483,7 @@ impl Cpu {
 
 	fn daa(&mut self, op: &[InstrTarget]) { todo!() }
 
-	fn cpl(&mut self, op: &[InstrTarget]) {
+	fn cpl(&mut self) {
 		self.a = self.a.not();
 		self.f.insert(Flags::n);
 		self.f.insert(Flags::h);
@@ -492,7 +519,7 @@ impl Cpu {
 	}
 
 	fn jpc(&mut self, op: &[InstrTarget]) {
-		let addr = self.get_operand16(&op[1]);
+		let addr = self.get_operand16(&op[0]);
 		if self.get_cond(&op[0]) {
 			self.pc = addr;
 			self.tick();
@@ -500,7 +527,7 @@ impl Cpu {
 	}
 
 	fn jr(&mut self, op: &[InstrTarget]) {
-		let offset = self.get_operand(&op[1]) as i8;
+		let offset = self.get_operand(&op[0]) as i8;
 		self.pc = self.pc.wrapping_add_signed(offset as i16);
 		self.tick();
 	}
@@ -529,7 +556,7 @@ impl Cpu {
 		}
 	}
 
-	fn ret(&mut self, op: &[InstrTarget]) {
+	fn ret(&mut self) {
 		self.pc = self.stack_pop();
 		self.tick();
 	}
@@ -543,8 +570,8 @@ impl Cpu {
 		}
 	}
 
-	fn reti(&mut self, op: &[InstrTarget]) {
-		let addr = self.stack_pop();
+	fn reti(&mut self) {
+		self.pc = self.stack_pop();
 		self.ime = true;
 		self.tick();
 	}
@@ -556,8 +583,8 @@ impl Cpu {
 		self.tick();
 	}
 
-	fn di(&mut self, op: &[InstrTarget]) { self.ime = false; self.ime_to_set = false; }
-	fn ei(&mut self, op: &[InstrTarget]) { self.ime_to_set = true; }
+	fn di(&mut self) { self.ime = false; self.ime_to_set = false; }
+	fn ei(&mut self) { self.ime_to_set = true; }
 
 	fn stop(&mut self, op: &[InstrTarget]) { todo!() }
 	fn halt(&mut self, op: &[InstrTarget]) { todo!() }
@@ -567,15 +594,18 @@ impl Cpu {
 impl Cpu {
   fn execute_no_prefix(&mut self, instr: &Instruction) {
     match instr.opcode {
-      0x0 => self.nop(&instr.operands),
-      0x1 | 0x2 | 0x6 | 0x8 | 0xa | 0xe | 0x11 | 0x12 | 0x16 | 0x1a | 0x1e | 0x21 |
-      0x22 | 0x26 | 0x2a | 0x2e | 0x31 | 0x32 | 0x36 | 0x3a | 0x3e | 0x40 | 0x41 | 0x42 | 
+      0x0 => self.nop(),
+      0x02 | 0x06 | 0x08 | 0x0a | 0x0e | 0x12 | 0x16 | 0x1a | 0x1e |
+	  0x22 | 0x26 | 0x2a | 0x2e | 0x32 | 0x36 | 0x3a | 0x3e | 0x40 | 0x41 | 0x42 | 
       0x43 | 0x44 | 0x45 | 0x46 | 0x47 | 0x48 | 0x49 | 0x4a | 0x4b | 0x4c | 0x4d | 0x4e |
       0x4f | 0x50 | 0x51 | 0x52 | 0x53 | 0x54 | 0x55 | 0x56 | 0x57 | 0x58 | 0x59 | 0x5a |
       0x5b | 0x5c | 0x5d | 0x5e | 0x5f | 0x60 | 0x61 | 0x62 | 0x63 | 0x64 | 0x65 | 0x66 |
       0x67 | 0x68 | 0x69 | 0x6a | 0x6b | 0x6c | 0x6d | 0x6e | 0x6f | 0x70 | 0x71 | 0x72 |
       0x73 | 0x74 | 0x75 | 0x77 | 0x78 | 0x79 | 0x7a | 0x7b | 0x7c | 0x7d | 0x7e | 0x7f |
-      0xe2 | 0xea | 0xf2 | 0xf8 | 0xf9 | 0xfa => self.ld(&instr.operands),
+      0xe2 | 0xea | 0xf2 | 0xfa => self.ld(&instr.operands),
+	  0x01 | 0x11 | 0x21 | 0x31 => self.ld16(&instr.operands),
+	  0xf8 => self.ldrel(&instr.operands),
+	  0xf9 => self.ldsp(),
       0x3 | 0x4 | 0xc | 0x13 | 0x14 | 0x1c | 0x23 | 0x24 | 0x2c | 0x33 | 0x34 | 0x3c => self.inc(&instr.operands),
       0x5 | 0xb | 0xd | 0x15 | 0x1b | 0x1d | 0x25 | 0x2b | 0x2d | 0x35 | 0x3b | 0x3d => self.dec(&instr.operands),
       0x7 => self.rlca(&instr.operands),
@@ -587,9 +617,9 @@ impl Cpu {
       0x18 | 0x20 | 0x28 | 0x30 | 0x38 => self.jr(&instr.operands),
       0x1f => self.rra(&instr.operands),
       0x27 => self.daa(&instr.operands),
-      0x2f => self.cpl(&instr.operands),
-      0x37 => self.scf(&instr.operands),
-      0x3f => self.ccf(&instr.operands),
+      0x2f => self.cpl(),
+      0x37 => self.scf(),
+      0x3f => self.ccf(),
       0x76 => self.halt(&instr.operands),
       0x88 | 0x89 | 0x8a | 0x8b | 0x8c | 0x8d | 0x8e | 0x8f | 0xce => self.adc(&instr.operands),
       0x90 | 0x91 | 0x92 | 0x93 | 0x94 | 0x95 | 0x96 | 0x97 | 0xd6 => self.sub(&instr.operands),
@@ -598,13 +628,13 @@ impl Cpu {
       0xa8 | 0xa9 | 0xaa | 0xab | 0xac | 0xad | 0xae | 0xaf | 0xee => self.xor(&instr.operands),
       0xb0 | 0xb1 | 0xb2 | 0xb3 | 0xb4 | 0xb5 | 0xb6 | 0xb7 | 0xf6 => self.or(&instr.operands),
       0xb8 | 0xb9 | 0xba | 0xbb | 0xbc | 0xbd | 0xbe | 0xbf | 0xfe => self.cp(&instr.operands),
-      0xc0 | 0xc8 | 0xc9 | 0xd0 | 0xd8 => self.ret(&instr.operands),
+      0xc0 | 0xc8 | 0xc9 | 0xd0 | 0xd8 => self.ret(),
       0xc1 | 0xd1 | 0xe1 | 0xf1 => self.pop(&instr.operands),
       0xc2 | 0xc3 | 0xca | 0xd2 | 0xda | 0xe9 => self.jp(&instr.operands),
       0xc4 | 0xcc | 0xcd | 0xd4 | 0xdc => self.call(&instr.operands),
       0xc5 | 0xd5 | 0xe5 | 0xf5 => self.push(&instr.operands),
       0xc7 | 0xcf | 0xd7 | 0xdf | 0xe7 | 0xef | 0xf7 | 0xff => self.rst(&instr.operands),
-			_ => todo!()
+	  _ => todo!("{}: {} not reachable", instr.opcode, instr.name)
     }
   }
 
@@ -620,7 +650,7 @@ impl Cpu {
 			0x40 ..= 0x7f => self.bit(&instr.operands),
 			0x80 ..= 0xbf => self.res(&instr.operands),
 			0xc0 ..= 0xff => self.set(&instr.operands),
-			_ => todo!()
+			_ => todo!("{}: {} not reachable", instr.opcode, instr.name)
 		}
 	}
 }

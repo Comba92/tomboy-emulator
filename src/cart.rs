@@ -57,13 +57,13 @@ impl Cart {
             .ok_or("No valid cart type")?;
 
         let rom_size_id = bytes[0x148];
-        let rom_size = ROM_SIZE_MAP
+        let rom_size = 16*1024 * ROM_SIZE_MAP
             .get_key_value(&rom_size_id)
             .map(|o| *o.1)
             .ok_or("No valid ROM size")?;
 
         let ram_size_id = bytes[0x149];
-        let ram_size = RAM_SIZE_MAP
+        let ram_size = 8*1024 * RAM_SIZE_MAP
             .get_key_value(&ram_size_id)
             .map(|o| *o.1)
             .ok_or("No valid RAM size")?;
