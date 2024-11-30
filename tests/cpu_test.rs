@@ -8,22 +8,23 @@ mod cpu_tests {
   #[test]
   fn run_test() {
     let mut cpu = Cpu::new();
-    cpu.pc = 0x100;
+    cpu.pc = 0x101;
+    cpu.bus.mem[0xFF44] = 0x90;
 
-    let rom = std::fs::read("./tests/roms/03-op sp,hl.gb").unwrap();
+    let rom = std::fs::read("./tests/roms/06-ld r,r.gb").unwrap();
     let cart = Cart::new(&rom).unwrap();
     println!("{:?}", cart);
   
-    let mut log_lines = include_str!("logs/3.txt").lines();
+    let mut log_lines = include_str!("logs/6.txt").lines();
 
-    let (left, _) = cpu.mem.split_at_mut(rom.len());
+    let (left, _) = cpu.bus.mem.split_at_mut(rom.len());
     left.copy_from_slice(&rom);
     
     for i in 0..243272 {
       let mine = log_cpu(&mut cpu);
       let log = log_lines.next().unwrap();
       
-      let op = cpu.mem[cpu.pc as usize];
+      let op = cpu.peek(cpu.pc);
       
       if mine != log {
         let diff = prettydiff

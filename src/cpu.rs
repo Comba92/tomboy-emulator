@@ -3,7 +3,7 @@ use std::ops::{Not, Shl, Shr};
 use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
-use crate::instr::{InstrTarget, Instruction, TargetKind, INSTRUCTIONS};
+use crate::{bus::Bus, instr::{InstrTarget, Instruction, TargetKind, INSTRUCTIONS}};
 
 bitflags! {
 	#[derive(Default, Debug)]
@@ -34,13 +34,13 @@ pub struct Cpu {
 	pub pc: u16,
 	pub ime: bool,
 	ime_to_set: bool,
-	cycles: usize,
-	pub mem: [u8; 0x10000],
+	mcycles: usize,
+	pub bus: Bus,
 }
 
 impl core::fmt::Debug for Cpu {
 		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-				f.debug_struct("Cpu").field("a", &self.a).field("f", &self.f).field("bc", &self.bc).field("de", &self.de).field("hl", &self.hl).field("sp", &self.sp).field("pc", &self.pc).field("ime", &self.ime).field("ime_to_set", &self.ime_to_set).field("cycles", &self.cycles)
+				f.debug_struct("Cpu").field("a", &self.a).field("f", &self.f).field("bc", &self.bc).field("de", &self.de).field("hl", &self.hl).field("sp", &self.sp).field("pc", &self.pc).field("ime", &self.ime).field("ime_to_set", &self.ime_to_set).field("cycles", &self.mcycles)
 					.finish()
 		}
 }
@@ -48,7 +48,6 @@ impl core::fmt::Debug for Cpu {
 impl Cpu {
 	pub fn new() -> Self {
 		Self {
-			mem: [0; 0x10000],
 			a: 1,
 			f: Flags::from_bits_retain(0xB0),
 			bc: Register16::from_bits(0x13),
@@ -58,7 +57,8 @@ impl Cpu {
 			pc: 0x0100,
 			ime: false,
 			ime_to_set: false,
-			cycles: 0,
+			mcycles: 0,
+			bus: Bus::new(),
 		}
 	}
 
@@ -108,17 +108,11 @@ impl Cpu {
 	}
 
 	pub fn peek(&self, addr: u16) -> u8 {
-		self.mem[addr as usize]
+		self.bus.read(addr)
 	}
 
 	fn read(&mut self, addr: u16) -> u8 {
-		let res = self.mem[addr as usize];
-		if (0xFF00..0xFFFF).contains(&addr) {
-			println!("[HRAM]: {:02X?}", &self.mem[0xFF00..]);
-		}
-		if (0xC000..=0xDFFF).contains(&addr) {
-			println!("Read {res:02X} from {addr:04X}")
-		}
+		let res = self.bus.read(addr);
 		self.tick();
 		res
 	}
@@ -126,15 +120,8 @@ impl Cpu {
 		u16::from_le_bytes([self.read(addr), self.read(addr.wrapping_add(1))])
 	}
 	fn write(&mut self, addr: u16, val: u8) {
-		self.mem[addr as usize] = val;
-		println!("[WRITE] Wrote {val:02X} to {addr:04X}");
-		self.tick();
-		if (0xC000..=0xDFFF).contains(&addr) {
-			println!("Wrote {val:02X} to {addr:04X}")
-		}
-		else if (0xFF00..0xFFFF).contains(&addr) {
-			println!("[HRAM]: {:02X?}", &self.mem[0xFF00..]);
-		}
+		println!("Wrote {val:02X} to {addr:04X}");
+		self.bus.write(addr, val);
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -163,7 +150,7 @@ impl Cpu {
 		res
 	}
 	fn tick(&mut self) {
-		self.cycles += 1;
+		self.mcycles += 1;
 	}
 
 	pub fn step(&mut self) {
@@ -195,9 +182,11 @@ impl Cpu {
 			(TargetKind::Immediate8 | TargetKind::Signed8, _) => self.pc_fetch(),
 			(TargetKind::Address8, _) => {
 				let offset = self.pc_fetch();
-				println!("LDH addr: {:04X}", self.hram(offset));
-				// println!("[HRAM]: {:?}", &self.mem[0xFF00..]);
 				self.read(self.hram(offset))
+			}
+			(TargetKind::Address16, false) => {
+				let addr = self.pc_fetch16();
+				self.read(addr)
 			}
 			(TargetKind::A, _) => self.a,
 			(TargetKind::B, _) => self.bc.hi(),
@@ -249,8 +238,6 @@ impl Cpu {
 		match (&target.kind, target.immediate) {
 			(TargetKind::Address8, _) => {
 				let offset = self.pc_fetch();
-				println!("LDH addr: {:04X}", self.hram(offset));
-				// println!("[HRAM]: {:?}", &self.mem[0xFF00..]);
 				self.write(self.hram(offset), val);
 			}
 			(TargetKind::Address16, true) => {
@@ -458,7 +445,7 @@ impl Cpu {
 	}
 
 	fn cp(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.get_operand(&ops[1]);
 		let res = (self.a as u16).wrapping_add(!(val as u16) + 1);
 		
 		self.set_z(res);
