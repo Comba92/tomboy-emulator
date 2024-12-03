@@ -35,7 +35,7 @@ pub struct Cpu {
 	pub ime: bool,
 	ime_to_set: bool,
 	mcycles: usize,
-	pub bus: Bus,
+	pub bus: [u8; 0x10000],
 }
 
 impl core::fmt::Debug for Cpu {
@@ -58,7 +58,7 @@ impl Cpu {
 			ime: false,
 			ime_to_set: false,
 			mcycles: 0,
-			bus: Bus::new(),
+			bus: [0; 0x10000],
 		}
 	}
 
@@ -103,16 +103,16 @@ impl Cpu {
 		self.f.set(Flags::h, res);
 	}
 
-	fn set_z(&mut self, val: u16) {
+	fn set_z(&mut self, val: u8) {
 		self.f.set(Flags::z, val == 0);
 	}
 
-	pub fn peek(&self, addr: u16) -> u8 {
-		self.bus.read(addr)
+	pub fn peek(&mut self, addr: u16) -> u8 {
+		self.bus[addr as usize]
 	}
 
 	fn read(&mut self, addr: u16) -> u8 {
-		let res = self.bus.read(addr);
+		let res = self.peek(addr);
 		self.tick();
 		res
 	}
@@ -121,7 +121,7 @@ impl Cpu {
 	}
 	fn write(&mut self, addr: u16, val: u8) {
 		println!("Wrote {val:02X} to {addr:04X}");
-		self.bus.write(addr, val);
+		self.bus[addr as usize] = val;
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -179,8 +179,9 @@ impl Cpu {
 
 	fn get_operand(&mut self, target: &InstrTarget) -> u8 {
 		match (&target.kind, target.immediate) {
-			(TargetKind::Immediate8 | TargetKind::Signed8, _) => self.pc_fetch(),
-			(TargetKind::Address8, _) => {
+			(TargetKind::Immediate8 | TargetKind::Signed8, _) 
+			| (TargetKind::Address8, true) => self.pc_fetch(),
+			(TargetKind::Address8, false) => {
 				let offset = self.pc_fetch();
 				self.read(self.hram(offset))
 			}
@@ -211,43 +212,15 @@ impl Cpu {
 		}
 	}
 
-	fn get_operand16(&mut self, target: &InstrTarget) -> u16 {
-		match (&target.kind, target.immediate) {
-			(TargetKind::Immediate16, _) | (TargetKind::Address16, true) => self.pc_fetch16(),
-			(TargetKind::Address16, false) => {
-				let addr = self.pc_fetch16();
-				self.read16(addr)
-			}
-			(TargetKind::SP, _) => self.sp,
-			(TargetKind::AF, _) => self.af(),
-			(TargetKind::BC, true)  => self.bc.0,
-			(TargetKind::BC, false) => self.read16(self.bc.0),
-			(TargetKind::DE, true)  => self.de.0,
-			(TargetKind::DE, false) => self.read16(self.de.0),
-			(TargetKind::HL, true)  => self.hl.0,
-			(TargetKind::HL, false) => {
-				let res = self.read16(self.hl.0);
-				self.update_hl(target);
-				res
-			}
-			_ => unreachable!("{:?}", target.kind),
-		}
-	}
-
 	fn set_result(&mut self, target: &InstrTarget, val: u8) {
 		match (&target.kind, target.immediate) {
-			(TargetKind::Address8, _) => {
+			(TargetKind::Address8, false) => {
 				let offset = self.pc_fetch();
 				self.write(self.hram(offset), val);
 			}
-			(TargetKind::Address16, true) => {
-				let addr = self.pc_fetch16();
-				self.write(addr, val);
-			}
 			(TargetKind::Address16, false) => {
 				let addr = self.pc_fetch16();
-				let lookup = self.read16(addr);
-				self.write(lookup, val);
+				self.write(addr, val);
 			}
 			(TargetKind::A, _) => self.a = val,
 			(TargetKind::B, _) => self.bc.set_hi(val),
@@ -279,20 +252,42 @@ impl Cpu {
 		}
 	}
 
+	fn get_operand16(&mut self, target: &InstrTarget) -> u16 {
+		match (&target.kind, target.immediate) {
+			(TargetKind::Address8, false) => {
+				let offset = self.pc_fetch();
+				self.read16(self.hram(offset))
+			}
+			(TargetKind::Immediate16, _) | (TargetKind::Address16, true) => self.pc_fetch16(),
+			(TargetKind::Address16, false) => {
+				let addr = self.pc_fetch16();
+				self.read16(addr)
+			}
+			(TargetKind::SP, _) => self.sp,
+			(TargetKind::AF, _) => self.af(),
+			(TargetKind::BC, true)  => self.bc.0,
+			(TargetKind::BC, false) => self.read16(self.bc.0),
+			(TargetKind::DE, true)  => self.de.0,
+			(TargetKind::DE, false) => self.read16(self.de.0),
+			(TargetKind::HL, true)  => self.hl.0,
+			(TargetKind::HL, false) => {
+				let res = self.read16(self.hl.0);
+				self.update_hl(target);
+				res
+			}
+			_ => unreachable!("{:?}", target.kind),
+		}
+	}
+
 	fn set_result16(&mut self, target: &InstrTarget, val: u16) {
 		match (&target.kind, target.immediate) {
-			(TargetKind::Address8, _) => {
+			(TargetKind::Address8, false) => {
 				let offset = self.pc_fetch();
 				self.write16(self.hram(offset), val);
 			}
-			(TargetKind::Address16, true) => {
-				let addr = self.pc_fetch16();
-				self.write16(addr, val);
-			}
 			(TargetKind::Address16, false) => {
 				let addr = self.pc_fetch16();
-				let lookup = self.read16(addr);
-				self.write16(lookup, val)
+				self.write16(addr, val);
 			}
 			(TargetKind::SP, _) => self.sp = val,
 			(TargetKind::AF, _) => self.set_af(val),
@@ -393,10 +388,10 @@ impl Cpu {
 	}
 
 	fn add(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.get_operand(&ops[1]);
 		let res = self.a as u16 + val as u16;
 		
-		self.set_z(res);
+		self.set_z(res as u8);
 		self.f.remove(Flags::n);
 		self.set_carry(res);
 		self.set_hcarry(self.a, val);
@@ -405,12 +400,12 @@ impl Cpu {
 	}
 
 	fn adc(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.get_operand(&ops[1]);
 		let res = self.a as u16 
 			+ val as u16
 			+ self.f.contains(Flags::c) as u16; 
 		
-		self.set_z(res);
+		self.set_z(res as u8);
 		self.f.remove(Flags::n);
 		self.set_carry(res);
 		self.set_hcarry(self.a, val);
@@ -419,10 +414,10 @@ impl Cpu {
 	}
 
 	fn sub(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
-		let res = self.a as u16 + (!(val as u16) + 1);
+		let val = self.get_operand(&ops[1]);
+		let res = (self.a as u16).wrapping_sub(val as u16);
 		
-		self.set_z(res);
+		self.set_z(res as u8);
 		self.f.insert(Flags::n);
 		self.set_carry(res);
 		self.set_hcarry(self.a, val);
@@ -431,12 +426,13 @@ impl Cpu {
 	}
 
 	fn sbc(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
-		let res = self.a as u16 
-			+ (!(val as u16) + 1)
-			+ (!(self.f.contains(Flags::c) as u16) + 1); 
+		let val = self.get_operand(&ops[1]);
+		let res = (self.a as u16)
+			.wrapping_sub(val as u16)
+			.wrapping_sub(self.f.contains(Flags::c) as u16);
+
 		
-		self.set_z(res);
+		self.set_z(res as u8);
 		self.f.insert(Flags::n);
 		self.set_carry(res);
 		self.set_hcarry(self.a, val);
@@ -446,9 +442,9 @@ impl Cpu {
 
 	fn cp(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand(&ops[1]);
-		let res = (self.a as u16).wrapping_add(!(val as u16) + 1);
+		let res = (self.a as u16).wrapping_sub(val as u16);
 		
-		self.set_z(res);
+		self.set_z(res as u8);
 		self.f.insert(Flags::n);
 		self.set_carry(res);
 		self.set_hcarry(self.a, val);
@@ -458,7 +454,7 @@ impl Cpu {
 		let val = self.get_operand(&ops[0]);
 		let res = val.wrapping_add(1);
 		
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.set_hcarry(val, 1);
 
@@ -490,35 +486,38 @@ impl Cpu {
 
 	fn and(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand(&ops[1]);
-		
-		self.set_z(val as u16);
+		let res = self.a & val;
+
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.insert(Flags::h);
 		self.f.remove(Flags::c);
 
-		self.a &= val;
+		self.a = res;
 	}
 
 	fn or(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand(&ops[1]);
-		
-		self.set_z(val as u16);
+		let res = self.a | val;
+
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.remove(Flags::c);
 
-		self.a |= val;
+		self.a = res;
 	}
 
 	fn xor(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand(&ops[1]);
-		
-		self.set_z(val as u16);
+		let res = self.a ^ val;
+
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.remove(Flags::c);
 		
-		self.a ^= val;
+		self.a = res;
 	}
 
 	fn ccf(&mut self) {
@@ -558,7 +557,7 @@ impl Cpu {
 		let val = self.get_operand16(&ops[1]) as i8;
 		let (res, carry) = self.sp.overflowing_add_signed(val as i16);
 		
-		self.set_z(res);
+		self.set_z(res as u8);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, carry);
 		self.set_hcarry16(self.sp, val as u16);
@@ -569,7 +568,7 @@ impl Cpu {
 	}
 
 	fn rlca(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.a;
 		let res = val.rotate_left(1);
 
 		self.f.remove(Flags::z);
@@ -577,11 +576,11 @@ impl Cpu {
 		self.f.set(Flags::c, val & 0x80 != 0);
 		self.f.remove(Flags::h);
 
-		self.set_result(&ops[0], res);
+		self.a = res;
 	}
 
 	fn rrca(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.a;
 		let res = val.rotate_right(1);
 
 		self.f.remove(Flags::z);
@@ -589,11 +588,11 @@ impl Cpu {
 		self.f.set(Flags::c, val & 1 != 0);
 		self.f.remove(Flags::h);
 
-		self.set_result(&ops[0], res);
+		self.a = res;
 	}
 
 	fn rla(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.a;
 		let res = val.rotate_left(1) | self.f.contains(Flags::c) as u8;
 
 		self.f.remove(Flags::z);
@@ -601,11 +600,11 @@ impl Cpu {
 		self.f.set(Flags::c, val & 0x80 != 0);
 		self.f.remove(Flags::h);
 
-		self.set_result(&ops[0], res);
+		self.a = res;
 	}
 
 	fn rra(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.a;
 		let res = ((self.f.contains(Flags::c) as u8) << 7) | val.rotate_right(1);
 
 		self.f.remove(Flags::z);
@@ -613,14 +612,14 @@ impl Cpu {
 		self.f.set(Flags::c, val & 1 != 0);
 		self.f.remove(Flags::h);
 
-		self.set_result(&ops[0], res);
+		self.a = res;
 	}
 	
 	fn rlc(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand(&ops[0]);
 		let res = val.rotate_left(1);
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, val & 0x80 != 0);
 		self.f.remove(Flags::h);
@@ -632,7 +631,7 @@ impl Cpu {
 		let val = self.get_operand(&ops[0]);
 		let res = val.rotate_right(1);
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, val & 1 != 0);
 		self.f.remove(Flags::h);
@@ -644,7 +643,7 @@ impl Cpu {
 		let val = self.get_operand(&ops[0]);
 		let res = val.rotate_left(1) | self.f.contains(Flags::c) as u8;
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, val & 0x80 != 0);
 		self.f.remove(Flags::h);
@@ -656,7 +655,7 @@ impl Cpu {
 		let val = self.get_operand(&ops[0]);
 		let res = ((self.f.contains(Flags::c) as u8) << 7) | val.rotate_right(1);
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, val & 1 != 0);
 		self.f.remove(Flags::h);
@@ -665,27 +664,27 @@ impl Cpu {
 	}
 
 	fn sla(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.a;
 		let res = val.shl(1);
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, val & 0x80 != 0);
 		self.f.remove(Flags::h);
 
-		self.set_result(&ops[0], res);
+		self.a = res;
 	}
 
 	fn sra(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
+		let val = self.a;
 		let res = val.shr(1);
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, val & 1 != 0);
 		self.f.remove(Flags::h);
 
-		self.set_result(&ops[0], res);
+		self.a = res;
 	}
 
 	fn swap(&mut self, ops: &[InstrTarget]) {
@@ -694,7 +693,7 @@ impl Cpu {
 		let high = val & 0b1111_0000;
 		let res = (low << 4) | (high >> 4);
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.remove(Flags::c);
@@ -706,7 +705,7 @@ impl Cpu {
 		let val = self.get_operand(&ops[0]);
 		let res = val.shr(1);
 
-		self.set_z(res as u16);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.set(Flags::c, val & 1 != 0);
 		self.f.remove(Flags::h);
@@ -819,8 +818,8 @@ impl Cpu {
 	fn di(&mut self) { self.ime = false; self.ime_to_set = false; }
 	fn ei(&mut self) { self.ime_to_set = true; }
 
-	fn stop(&mut self, ops: &[InstrTarget]) { todo!() }
-	fn halt(&mut self, ops: &[InstrTarget]) { todo!() }
+	fn stop(&mut self, ops: &[InstrTarget]) {  }
+	fn halt(&mut self, ops: &[InstrTarget]) {  }
 }
 
 
@@ -838,7 +837,7 @@ impl Cpu {
 			0xf9 => self.ldhl(),
 			0x04 | 0x0c | 0x14 | 0x1c | 0x24 | 0x2c | 0x34 | 0x3c => self.inc(ops),
 			0x03 | 0x13 | 0x23 | 0x33 => self.inc16(ops),
-			0x0d | 0x15 | 0x1d | 0x25 | 0x2d | 0x35 | 0x3d => self.dec(ops),
+			0x05 | 0x0d | 0x15 | 0x1d | 0x25 | 0x2d | 0x35 | 0x3d => self.dec(ops),
 			0x0b | 0x1b | 0x2b | 0x3b => self.dec16(ops),
 			0x07 => self.rlca(ops),
 			0x80 | 0x81 | 0x82 | 0x83 | 0x84 | 0x85 | 0x86 | 0x87 | 0xc6 => self.add(ops),

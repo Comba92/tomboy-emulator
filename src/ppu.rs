@@ -1,5 +1,3 @@
-use std::default;
-
 use bitflags::bitflags;
 
 bitflags! {
@@ -39,6 +37,7 @@ pub struct Ppu {
   scx: u8,
   wy: u8,
   wx: u8,
+  bg_palette: u8,
 
   tcycles: u8,
   scanlines: u8,
@@ -54,20 +53,22 @@ enum PpuMode {
 }
 
 impl Ppu {
-  pub fn reg_read(&mut self, addr: u16) -> u8 {
+  pub fn read_reg(&mut self, addr: u16) -> u8 {
     match addr {
       0xFF40 => self.ctrl.bits(),
       0xFF41 => self.stat.bits(),
       0xFF42 => self.scy,
       0xFF43 => self.scx,
-      0xFF44 => self.ly,
+      0xFF44 => 0x90, // self.ly,
       0xFF45 => self.lyc,
       0xFF4A => self.wy,
       0xFF4B => self.wx,
+      0xFF47 => self.bg_palette,
       _ => todo!("Ppu register read {addr:04X} not implemented"),
     }
   }
-  pub fn reg_write(&mut self, addr: u16, val: u8) {
+
+  pub fn write_reg(&mut self, addr: u16, val: u8) {
     match addr {
       0xFF40 => self.ctrl = Ctrl::from_bits_retain(val),
       0xFF41 => self.stat = Stat::from_bits_retain(val),
@@ -76,6 +77,7 @@ impl Ppu {
       0xFF45 => self.lyc = val,
       0xFF4A => self.wy = val,
       0xFF4B => self.wx = val,
+      0xFF47 => self.bg_palette = val,
       _ => todo!("Ppu register write {addr:04X} not implemented"),
     }
   }

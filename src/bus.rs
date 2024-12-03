@@ -1,22 +1,33 @@
+use crate::ppu::Ppu;
+
 pub struct Bus {
 	pub mem: [u8; 0x10000],
+  ppu: Ppu
 }
 
 enum BusTarget {
-  Rom, VRam, ExRam, WRam, Oam, Unused, IO, HRam, IE,
+  Rom, VRam, ExRam, WRam, Oam, Unused, Ppu, IO, HRam, IE,
 }
 
 impl Bus {
   pub fn new() -> Self {
-    Self { mem: [0; 0x10000] }
+    Self { mem: [0; 0x10000], ppu: Ppu::default() }
   }
 
-  pub fn read(&self, addr: u16) -> u8 {
-    self.mem[addr as usize]
+  pub fn read(&mut self, addr: u16) -> u8 {
+    let (dst, addr) = self.map(addr);
+    match dst {
+      BusTarget::Ppu => self.ppu.read_reg(addr),
+      _ => self.mem[addr as usize],
+    }
   }
 
   pub fn write(&mut self, addr: u16, val: u8) {
-    self.mem[addr as usize] = val;
+    let (dst, addr) = self.map(addr);
+    match dst {
+      BusTarget::Ppu => self.ppu.write_reg(addr, val),
+      _ => self.mem[addr as usize] = val,
+    }
   }
 
   fn map(&self, addr: u16) -> (BusTarget, u16) {
@@ -29,6 +40,7 @@ impl Bus {
       0xE000..=0xFDFF => (WRam, (addr & 0xDFFF) - 0xC000),
       0xFE00..=0xFE9F => (Oam, addr - 0xFE00),
       0xFEA0..=0xFEFF => (Unused, addr),
+      0xFF40..=0xFF4B => (Ppu, addr),
       0xFF00..=0xFF7F => (IO, addr),
       0xFF80..=0xFFFE => (HRam, addr - 0xFF80),
       0xFFFF => (IE, addr),
