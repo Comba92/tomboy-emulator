@@ -11,11 +11,11 @@ mod cpu_tests {
     cpu.pc = 0x100;
     cpu.bus[0xFF44] = 0x90;
 
-    let rom = std::fs::read("./tests/roms/03-op sp,hl.gb").unwrap();
+    let rom = std::fs::read("./tests/roms/09-op r,r.gb").unwrap();
     let cart = Cart::new(&rom).unwrap();
     println!("{:?}", cart);
   
-    let mut log_lines = include_str!("logs/3.txt").lines();
+    let mut log_lines = include_str!("logs/9.txt").lines();
 
     let (left, _) = cpu.bus.split_at_mut(rom.len());
     left.copy_from_slice(&rom);
@@ -30,12 +30,14 @@ mod cpu_tests {
         let diff = prettydiff
         ::diff_words(&mine, log);
         
+        println!("{}\nLast OP {:02X}: {}", mine, op, INSTRUCTIONS[op as usize].name);
+
         println!("{:0X?}", cpu);
         println!("{diff}\n{i} lines executed");
         panic!()
-      }      
+      }
       
-      println!("{}\nLast OP {:02X}: {}", mine, op, INSTRUCTIONS[op as usize].name);
+      // println!("{}\nLast OP {:02X}: {}", mine, op, INSTRUCTIONS[op as usize].name);
       cpu.step();
     }
   }

@@ -1,9 +1,9 @@
-use std::ops::{Not, Shl, Shr};
+use std::ops::{Not, Shl, Shr, BitAnd, BitOr, BitXor};
 
 use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
-use crate::{bus::Bus, instr::{InstrTarget, Instruction, TargetKind, INSTRUCTIONS}};
+use crate::instr::{InstrTarget, Instruction, TargetKind, INSTRUCTIONS};
 
 bitflags! {
 	#[derive(Default, Debug)]
@@ -85,13 +85,20 @@ impl Cpu {
 	}
 
 	// Be sure to always set after flag n
-	fn set_hcarry(&mut self, a: u8, b: u8) {
+	fn set_hcarry_full(&mut self, a: u8, b: u8, c: u8) {
 		let res = if self.f.contains(Flags::n) {
-			((a & 0xF).wrapping_sub(b & 0xF)) & 0x10 != 0
+			((a & 0xF).wrapping_sub(b & 0xF).wrapping_sub(c & 0xF)) & 0x10 != 0
 		} else {
-			((a & 0xF).wrapping_add(b & 0xF)) & 0x10 != 0
+			((a & 0xF).wrapping_add(b & 0xF).wrapping_add(c & 0xF)) & 0x10 != 0
 		};
 		self.f.set(Flags::h, res);
+	}
+
+	fn set_hcarry(&mut self, a: u8, b: u8) {
+		self.set_hcarry_full(a, b, 0);
+	}
+	fn set_hcarry_with_carry(&mut self, a: u8, b: u8) {
+		self.set_hcarry_full(a, b, self.f.contains(Flags::c) as u8);
 	}
 
 	fn set_hcarry16(&mut self, a: u16, b: u16) {
@@ -120,7 +127,7 @@ impl Cpu {
 		u16::from_le_bytes([self.read(addr), self.read(addr.wrapping_add(1))])
 	}
 	fn write(&mut self, addr: u16, val: u8) {
-		println!("Wrote {val:02X} to {addr:04X}");
+		// println!("Wrote {val:02X} to {addr:04X}");
 		self.bus[addr as usize] = val;
 	}
 	fn write16(&mut self, addr: u16, val: u16){
@@ -139,16 +146,21 @@ impl Cpu {
 		])
 	}
 	fn stack_push(&mut self, val: u16) {
-		// TODO: not sure it is ok
-		self.sp = self.sp.wrapping_sub(2);
 		self.tick();
-		self.write16(self.sp, val);
+		let [lo, hi] = val.to_le_bytes();
+		self.sp = self.sp.wrapping_sub(1);
+		self.write(self.sp, hi);
+		self.sp = self.sp.wrapping_sub(1);
+		self.write(self.sp, lo);
 	}
 	fn stack_pop(&mut self) -> u16 {
-		let res = self.read16(self.sp);
-		self.sp = self.sp.wrapping_add(2);
-		res
+		let lo = self.read(self.sp);
+		self.sp = self.sp.wrapping_add(1);
+		let hi = self.read(self.sp);
+		self.sp = self.sp.wrapping_add(1);
+		u16::from_le_bytes([lo, hi])
 	}
+
 	fn tick(&mut self) {
 		self.mcycles += 1;
 	}
@@ -363,6 +375,7 @@ impl Cpu {
 		self.tick();
 	}
 
+	// TODO: not working
 	fn push(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand16(&ops[0]);
 		self.stack_push(val);
@@ -393,8 +406,8 @@ impl Cpu {
 		
 		self.set_z(res as u8);
 		self.f.remove(Flags::n);
-		self.set_carry(res);
 		self.set_hcarry(self.a, val);
+		self.set_carry(res);
 
 		self.a = res as u8;
 	}
@@ -407,8 +420,8 @@ impl Cpu {
 		
 		self.set_z(res as u8);
 		self.f.remove(Flags::n);
+		self.set_hcarry_with_carry(self.a, val);
 		self.set_carry(res);
-		self.set_hcarry(self.a, val);
 		
 		self.a = res as u8;
 	}
@@ -419,8 +432,8 @@ impl Cpu {
 		
 		self.set_z(res as u8);
 		self.f.insert(Flags::n);
-		self.set_carry(res);
 		self.set_hcarry(self.a, val);
+		self.set_carry(res);
 
 		self.a = res as u8;
 	}
@@ -434,8 +447,8 @@ impl Cpu {
 		
 		self.set_z(res as u8);
 		self.f.insert(Flags::n);
+		self.set_hcarry_with_carry(self.a, val);
 		self.set_carry(res);
-		self.set_hcarry(self.a, val);
 		
 		self.a = res as u8;
 	}
@@ -446,8 +459,8 @@ impl Cpu {
 		
 		self.set_z(res as u8);
 		self.f.insert(Flags::n);
-		self.set_carry(res);
 		self.set_hcarry(self.a, val);
+		self.set_carry(res);
 	}
 
 	fn inc(&mut self, ops: &[InstrTarget]) {
@@ -484,40 +497,29 @@ impl Cpu {
 		self.set_result16(&ops[0], res);
 	}
 
-	fn and(&mut self, ops: &[InstrTarget]) {
+	fn logical<F: Fn(u8, u8) -> u8>(&mut self, ops: &[InstrTarget], f: F) {
 		let val = self.get_operand(&ops[1]);
-		let res = self.a & val;
+		let res = f(self.a, val);
 
 		self.set_z(res);
 		self.f.remove(Flags::n);
-		self.f.insert(Flags::h);
 		self.f.remove(Flags::c);
-
 		self.a = res;
+	}
+
+	fn and(&mut self, ops: &[InstrTarget]) {
+		self.logical(ops, u8::bitand);
+		self.f.insert(Flags::h);
 	}
 
 	fn or(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[1]);
-		let res = self.a | val;
-
-		self.set_z(res);
-		self.f.remove(Flags::n);
+		self.logical(ops, u8::bitor);
 		self.f.remove(Flags::h);
-		self.f.remove(Flags::c);
-
-		self.a = res;
 	}
 
 	fn xor(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[1]);
-		let res = self.a ^ val;
-
-		self.set_z(res);
-		self.f.remove(Flags::n);
+		self.logical(ops, u8::bitxor);
 		self.f.remove(Flags::h);
-		self.f.remove(Flags::c);
-		
-		self.a = res;
 	}
 
 	fn ccf(&mut self) {
@@ -567,124 +569,76 @@ impl Cpu {
 		self.tick();
 	}
 
-	fn rlca(&mut self, ops: &[InstrTarget]) {
+	fn shifta<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, f: FS, carry: FB) {
 		let val = self.a;
-		let res = val.rotate_left(1);
+		let res = f(val);
 
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 0x80 != 0);
+		self.f.set(Flags::c, carry(val));
 		self.f.remove(Flags::h);
 
 		self.a = res;
 	}
 
-	fn rrca(&mut self, ops: &[InstrTarget]) {
-		let val = self.a;
-		let res = val.rotate_right(1);
-
-		self.f.remove(Flags::z);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 1 != 0);
-		self.f.remove(Flags::h);
-
-		self.a = res;
+	fn rlca(&mut self) {
+		self.shifta(|val| val.rotate_left(1), |val| val & 0x80 != 0);
 	}
 
-	fn rla(&mut self, ops: &[InstrTarget]) {
-		let val = self.a;
-		let res = val.rotate_left(1) | self.f.contains(Flags::c) as u8;
-
-		self.f.remove(Flags::z);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 0x80 != 0);
-		self.f.remove(Flags::h);
-
-		self.a = res;
+	fn rrca(&mut self) {
+		self.shifta(|val| val.rotate_right(1), |val| val & 1 != 0);
 	}
 
-	fn rra(&mut self, ops: &[InstrTarget]) {
-		let val = self.a;
-		let res = ((self.f.contains(Flags::c) as u8) << 7) | val.rotate_right(1);
-
-		self.f.remove(Flags::z);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 1 != 0);
-		self.f.remove(Flags::h);
-
-		self.a = res;
+	fn rla(&mut self) {
+		let carry = self.f.contains(Flags::c) as u8;
+		self.shifta(|val| val.shl(1) | carry, |val| val & 0x80 != 0);
 	}
-	
-	fn rlc(&mut self, ops: &[InstrTarget]) {
+
+	fn rra(&mut self) {
+		let carry = self.f.contains(Flags::c) as u8;
+		self.shifta(|val| (carry << 7) | val.shr(1), |val| val & 1 != 0);
+	}
+
+	fn shift<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, ops: &[InstrTarget], f: FS, carry: FB) {
 		let val = self.get_operand(&ops[0]);
-		let res = val.rotate_left(1);
+		let res = f(val);
 
 		self.set_z(res);
 		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 0x80 != 0);
+		self.f.set(Flags::c, carry(val));
 		self.f.remove(Flags::h);
 
 		self.set_result(&ops[0], res);
+	}
+
+	fn rlc(&mut self, ops: &[InstrTarget]) {
+		self.shift(ops, |val| val.rotate_left(1), |val| val & 0x80 != 0);
 	}
 
 	fn rrc(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
-		let res = val.rotate_right(1);
-
-		self.set_z(res);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 1 != 0);
-		self.f.remove(Flags::h);
-
-		self.set_result(&ops[0], res);
+		self.shift(ops, |val| val.rotate_right(1), |val| val & 1 != 0);
 	}
 
 	fn rl(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
-		let res = val.rotate_left(1) | self.f.contains(Flags::c) as u8;
-
-		self.set_z(res);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 0x80 != 0);
-		self.f.remove(Flags::h);
-
-		self.set_result(&ops[0], res);
+		let carry = self.f.contains(Flags::c) as u8;
+		self.shift(ops, |val| val.shl(1) | carry, |val| val & 0x80 != 0);
 	}
 
 	fn rr(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
-		let res = ((self.f.contains(Flags::c) as u8) << 7) | val.rotate_right(1);
-
-		self.set_z(res);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 1 != 0);
-		self.f.remove(Flags::h);
-
-		self.set_result(&ops[0], res);
+		let carry = self.f.contains(Flags::c) as u8;
+		self.shift(ops, |val| (carry << 7) | val.shr(1), |val| val & 1 != 0);
 	}
 
 	fn sla(&mut self, ops: &[InstrTarget]) {
-		let val = self.a;
-		let res = val.shl(1);
-
-		self.set_z(res);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 0x80 != 0);
-		self.f.remove(Flags::h);
-
-		self.a = res;
+		self.shift(ops, |val| val.shl(1), |val| val & 0x80 != 0);
 	}
 
 	fn sra(&mut self, ops: &[InstrTarget]) {
-		let val = self.a;
-		let res = val.shr(1);
+		self.shift(ops, |val| (val & 0b1000_0000) | val.shr(1), |val| val & 1 != 0);
+	}
 
-		self.set_z(res);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 1 != 0);
-		self.f.remove(Flags::h);
-
-		self.a = res;
+	fn srl(&mut self, ops: &[InstrTarget]) {
+		self.shift(ops, |val| val.shr(1), |val| val & 1 != 0);
 	}
 
 	fn swap(&mut self, ops: &[InstrTarget]) {
@@ -697,18 +651,6 @@ impl Cpu {
 		self.f.remove(Flags::n);
 		self.f.remove(Flags::h);
 		self.f.remove(Flags::c);
-
-		self.set_result(&ops[0], res);
-	}
-
-	fn srl(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[0]);
-		let res = val.shr(1);
-
-		self.set_z(res);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, val & 1 != 0);
-		self.f.remove(Flags::h);
 
 		self.set_result(&ops[0], res);
 	}
@@ -828,27 +770,27 @@ impl Cpu {
     let ops = &instr.operands;
 		match instr.opcode {
 			0x00 => self.nop(),
-			0x02 | 0x06 | 0x08 | 0x0a | 0x0e | 0x12 | 0x16 | 0x1a | 0x1e |
+			0x02 | 0x06 | 0x0a | 0x0e | 0x12 | 0x16 | 0x1a | 0x1e |
 			0x22 | 0x26 | 0x2a | 0x2e | 0x32 | 0x36 | 0x3a | 0x3e |
 			0x40 ..= 0x75 | 0x77 ..= 0x7f |
 			0xe0 | 0xe2 | 0xea | 0xf0 | 0xf2 | 0xfa => self.ld(ops),
-			0x01 | 0x11 | 0x21 | 0x31 => self.ld16(ops),
+			0x01 | 0x08 | 0x11 | 0x21 | 0x31 => self.ld16(ops),
 			0xf8 => self.ldsp(ops),
 			0xf9 => self.ldhl(),
 			0x04 | 0x0c | 0x14 | 0x1c | 0x24 | 0x2c | 0x34 | 0x3c => self.inc(ops),
 			0x03 | 0x13 | 0x23 | 0x33 => self.inc16(ops),
 			0x05 | 0x0d | 0x15 | 0x1d | 0x25 | 0x2d | 0x35 | 0x3d => self.dec(ops),
 			0x0b | 0x1b | 0x2b | 0x3b => self.dec16(ops),
-			0x07 => self.rlca(ops),
+			0x07 => self.rlca(),
 			0x80 | 0x81 | 0x82 | 0x83 | 0x84 | 0x85 | 0x86 | 0x87 | 0xc6 => self.add(ops),
 			0x09 | 0x19 | 0x29 | 0x39 => self.addhl(ops),
 			0xe8 => self.addsp(ops),
-			0x0f => self.rrca(ops), 
+			0x0f => self.rrca(), 
 			0x10 => self.stop(ops),
-			0x17 => self.rla(ops),
+			0x17 => self.rla(),
 			0x18 => self.jr(ops),
 			0x20 | 0x28 | 0x30 | 0x38 => self.jrc(ops),
-			0x1f => self.rra(ops),
+			0x1f => self.rra(),
 			0x27 => self.daa(ops),
 			0x2f => self.cpl(),
 			0x37 => self.scf(),
