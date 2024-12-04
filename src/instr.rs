@@ -78,6 +78,13 @@ pub struct InstrTarget {
   pub decrement: bool,
 }
 
+pub const ACC_TARGET: InstrTarget = InstrTarget {
+  kind: TargetKind::A,
+  immediate: false,
+  increment: false,
+  decrement: false,
+};
+
 #[derive(Deserialize, Debug)]
 struct InstrGroups {
   #[serde(borrow)]

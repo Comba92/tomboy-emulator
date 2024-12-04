@@ -1,7 +1,7 @@
 use std::{error::Error, fs};
 
 use sdl2::event::Event;
-use tomboy_emulator::{cart::Cart, cpu::Cpu};
+use tomboy_emulator::cpu::Cpu;
 
 const PALETTE: [(u8, u8, u8); 4] = [
   (15,56,15),

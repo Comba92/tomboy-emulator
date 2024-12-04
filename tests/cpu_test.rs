@@ -1,44 +1,60 @@
 #[cfg(test)]
 mod cpu_tests {
+  use circular_buffer::CircularBuffer;
   use instr::INSTRUCTIONS;
   use tomboy_emulator::*;
   use cpu::Cpu;
-  use cart::Cart;
 
   #[test]
   fn run_test() {
-    let mut cpu = Cpu::new();
-    cpu.pc = 0x100;
-    cpu.bus[0xFF44] = 0x90;
+    let roms = std::fs::read_dir("./tests/roms/").unwrap();
+    let logs = std::fs::read_dir("./tests/logs/").unwrap();
 
-    let rom = std::fs::read("./tests/roms/09-op r,r.gb").unwrap();
-    let cart = Cart::new(&rom).unwrap();
-    println!("{:?}", cart);
-  
-    let mut log_lines = include_str!("logs/9.txt").lines();
+    let mut iter = roms.zip(logs).enumerate();
 
-    let (left, _) = cpu.bus.split_at_mut(rom.len());
-    left.copy_from_slice(&rom);
-    
-    for i in 0..243272 {
-      let mine = log_cpu(&mut cpu);
-      let log = log_lines.next().unwrap();
+    while let Some((i, (Ok(rom_path), Ok(log_path)))) = iter.next() {
+      if i+1 <= 3 || i+1 == 7 { continue; }
+
+      let rom = std::fs::read(rom_path.path()).unwrap();
+      let log = std::fs::read_to_string(log_path.path()).unwrap();
+      let mut log_lines = log.lines();
+
+      println!("Executing {rom_path:?} {log_path:?}");
+
+      let mut cpu = Cpu::new();
+      cpu.pc = if [6].contains(&(i+1)) {
+        0x101
+      } else { 0x100 };
+
+      cpu.bus[0xFF44] = 0x90;
+      let mut last_ten = CircularBuffer::<10, String>::new();
+
+      let (left, _) = cpu.bus.split_at_mut(rom.len());
+      left.copy_from_slice(&rom);
       
-      let op = cpu.peek(cpu.pc);
-      
-      if mine != log {
-        let diff = prettydiff
-        ::diff_words(&mine, log);
+      while let Some(log) = log_lines.next() {
+        let mine = log_cpu(&mut cpu);
         
-        println!("{}\nLast OP {:02X}: {}", mine, op, INSTRUCTIONS[op as usize].name);
-
-        println!("{:0X?}", cpu);
-        println!("{diff}\n{i} lines executed");
-        panic!()
+        let op = cpu.peek(cpu.pc);
+        
+        if mine != log {
+          let diff = prettydiff
+          ::diff_words(&mine, log);
+          
+          for instr in last_ten {
+            println!("{instr}");
+          }
+          println!("{}\nLast OP {:02X}: {:X?}", mine, op, INSTRUCTIONS[op as usize]);
+          
+          println!("{:0X?}", cpu);
+          println!("{diff}\n{i} lines executed");
+          panic!()
+        }
+        
+        let last= format!("{}\nLast OP {:02X}: {} {:?}\n", mine, op, INSTRUCTIONS[op as usize].name, INSTRUCTIONS[op as usize].operands);
+        last_ten.push_back(last);
+        cpu.step();
       }
-      
-      // println!("{}\nLast OP {:02X}: {}", mine, op, INSTRUCTIONS[op as usize].name);
-      cpu.step();
     }
   }
   

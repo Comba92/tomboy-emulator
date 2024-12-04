@@ -3,7 +3,7 @@ use std::ops::{Not, Shl, Shr, BitAnd, BitOr, BitXor};
 use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
-use crate::instr::{InstrTarget, Instruction, TargetKind, INSTRUCTIONS};
+use crate::instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS};
 
 bitflags! {
 	#[derive(Default, Debug)]
@@ -49,7 +49,7 @@ impl Cpu {
 	pub fn new() -> Self {
 		Self {
 			a: 1,
-			f: Flags::from_bits_retain(0xB0),
+			f: Flags::from_bits_truncate(0xB0),
 			bc: Register16::from_bits(0x13),
 			de: Register16::from_bits(0xD8),
 			hl: Register16::from_bits(0x14D),
@@ -68,7 +68,11 @@ impl Cpu {
 
 	fn set_af(&mut self, val: u16) {
 		self.a = (val >> 8) as u8;
-		self.f = Flags::from_bits_retain(val as u8 & 0xFF)
+		self.set_f(val as u8);
+	}
+
+	fn set_f(&mut self, val: u8) {
+		self.f = Flags::from_bits_truncate(val & 0xF0)
 	}
 
 	fn update_hl(&mut self, target: &InstrTarget) {
@@ -147,18 +151,13 @@ impl Cpu {
 	}
 	fn stack_push(&mut self, val: u16) {
 		self.tick();
-		let [lo, hi] = val.to_le_bytes();
-		self.sp = self.sp.wrapping_sub(1);
-		self.write(self.sp, hi);
-		self.sp = self.sp.wrapping_sub(1);
-		self.write(self.sp, lo);
+		self.write16(self.sp.wrapping_sub(2), val);
+		self.sp = self.sp.wrapping_sub(2);
 	}
 	fn stack_pop(&mut self) -> u16 {
-		let lo = self.read(self.sp);
-		self.sp = self.sp.wrapping_add(1);
-		let hi = self.read(self.sp);
-		self.sp = self.sp.wrapping_add(1);
-		u16::from_le_bytes([lo, hi])
+		let value = self.read16(self.sp);
+		self.sp = self.sp.wrapping_add(2);
+		value
 	}
 
 	fn tick(&mut self) {
@@ -243,7 +242,7 @@ impl Cpu {
 			},
 			(TargetKind::D, _) => self.de.set_hi(val),
 			(TargetKind::E, _) => self.de.set_lo(val),
-			(TargetKind::F, _) => self.f = Flags::from_bits_retain(val),
+			(TargetKind::F, _) => self.set_f(val),
 			(TargetKind::H, _) => self.hl.set_hi(val),
 			(TargetKind::L, _) => self.hl.set_lo(val),
 			(TargetKind::BC, false) => {
@@ -388,17 +387,21 @@ impl Cpu {
 
 	// 0xf8
 	fn ldsp(&mut self, ops: &[InstrTarget]) {
-		let offset = self.get_operand(&ops[1]) as i8;
-		let (res, carry) = self.sp.overflowing_add_signed(offset as i16);
+		let offset = self.get_operand(&ops[2]) as i8;
+		let res = self.sp.wrapping_add_signed(offset as i16);
 		
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
-		self.f.set(Flags::c, carry);
+		self.set_carry(res);
 		self.set_hcarry16(self.sp, offset as u16);
 		
 		self.set_result16(&ops[0], res);
 		self.tick();
 	}
+
+	// fn add_full(&mut self) {
+		// TODO
+	// }
 
 	fn add(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand(&ops[1]);
@@ -534,7 +537,34 @@ impl Cpu {
 		self.f.insert(Flags::c);
 	}
 
-	fn daa(&mut self, ops: &[InstrTarget]) { todo!() }
+	// https://ehaskins.com/2018-01-30%20Z80%20DAA/
+	fn daa(&mut self) {
+		let mut correction = 0u8;
+		let mut carry = false;
+
+		if self.f.contains(Flags::h)
+		|| (!self.f.contains(Flags::n) && self.a & 0xF > 0x9) {
+			correction += 0x6;
+		}
+
+		if self.f.contains(Flags::c)
+		|| (!self.f.contains(Flags::n) && self.a > 0x99) {
+			correction += 0x60;
+			carry = true;
+		}
+
+		correction = if self.f.contains(Flags::n) {
+			correction.wrapping_neg()
+		} else { correction };
+
+		let res = self.a.wrapping_add(correction);
+
+		self.set_z(res);
+		self.f.set(Flags::c, carry);
+		self.f.remove(Flags::h);
+
+		self.a = res;
+	}
 
 	fn cpl(&mut self) {
 		self.a = self.a.not();
@@ -556,47 +586,40 @@ impl Cpu {
 
 	// 0xe8
 	fn addsp(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand16(&ops[1]) as i8;
-		let (res, carry) = self.sp.overflowing_add_signed(val as i16);
+		let val = self.get_operand(&ops[1]) as i8;
+		let res = self.sp.wrapping_add_signed(val as i16);
 		
-		self.set_z(res as u8);
+		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
-		self.f.set(Flags::c, carry);
+		self.set_carry(res);
 		self.set_hcarry16(self.sp, val as u16);
 		
-		self.hl.0 = res as u16;
+		self.sp = res as u16;
 		self.tick();
 		self.tick();
 	}
 
-	fn shifta<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, f: FS, carry: FB) {
-		let val = self.a;
-		let res = f(val);
-
+	fn shift_acc<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, f: FS, carry: FB) {
+		self.shift(&[ACC_TARGET], f, carry);
 		self.f.remove(Flags::z);
-		self.f.remove(Flags::n);
-		self.f.set(Flags::c, carry(val));
-		self.f.remove(Flags::h);
-
-		self.a = res;
 	}
 
 	fn rlca(&mut self) {
-		self.shifta(|val| val.rotate_left(1), |val| val & 0x80 != 0);
+		self.shift_acc(|val| val.rotate_left(1), |val| val & 0x80 != 0);
 	}
 
 	fn rrca(&mut self) {
-		self.shifta(|val| val.rotate_right(1), |val| val & 1 != 0);
+		self.shift_acc(|val| val.rotate_right(1), |val| val & 1 != 0);
 	}
 
 	fn rla(&mut self) {
 		let carry = self.f.contains(Flags::c) as u8;
-		self.shifta(|val| val.shl(1) | carry, |val| val & 0x80 != 0);
+		self.shift_acc(|val| val.shl(1) | carry, |val| val & 0x80 != 0);
 	}
 
 	fn rra(&mut self) {
 		let carry = self.f.contains(Flags::c) as u8;
-		self.shifta(|val| (carry << 7) | val.shr(1), |val| val & 1 != 0);
+		self.shift_acc(|val| (carry << 7) | val.shr(1), |val| val & 1 != 0);
 	}
 
 	fn shift<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, ops: &[InstrTarget], f: FS, carry: FB) {
@@ -723,6 +746,7 @@ impl Cpu {
 
 	fn callc(&mut self, ops: &[InstrTarget]) {
 		let addr = self.get_operand16(&ops[1]);
+
 		if self.get_cond(&ops[0]) {
 			self.stack_push(self.pc);
 			self.pc = addr;
@@ -791,7 +815,7 @@ impl Cpu {
 			0x18 => self.jr(ops),
 			0x20 | 0x28 | 0x30 | 0x38 => self.jrc(ops),
 			0x1f => self.rra(),
-			0x27 => self.daa(ops),
+			0x27 => self.daa(),
 			0x2f => self.cpl(),
 			0x37 => self.scf(),
 			0x3f => self.ccf(),
