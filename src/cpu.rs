@@ -374,7 +374,6 @@ impl Cpu {
 		self.tick();
 	}
 
-	// TODO: not working
 	fn push(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand16(&ops[0]);
 		self.stack_push(val);
@@ -386,14 +385,22 @@ impl Cpu {
 	}
 
 	// 0xf8
+	// https://stackoverflow.com/questions/5159603/gbz80-how-does-ld-hl-spe-affect-h-and-c-flags
 	fn ldsp(&mut self, ops: &[InstrTarget]) {
 		let offset = self.get_operand(&ops[2]) as i8;
 		let res = self.sp.wrapping_add_signed(offset as i16);
 		
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
-		self.set_carry(res);
-		self.set_hcarry16(self.sp, offset as u16);
+
+		// TODO: factor this out
+		if offset.is_negative() {
+			self.f.set(Flags::c, res & 0xFF <= self.sp & 0xFF);
+			self.f.set(Flags::h, res & 0xF <= self.sp & 0xF);
+		} else {
+			self.set_carry((self.sp & 0xFF).wrapping_add_signed(offset as i16));
+			self.set_hcarry(self.sp as u8, offset as u8);
+		}
 		
 		self.set_result16(&ops[0], res);
 		self.tick();
@@ -585,16 +592,48 @@ impl Cpu {
 	}
 
 	// 0xe8
+	// https://stackoverflow.com/questions/5159603/gbz80-how-does-ld-hl-spe-affect-h-and-c-flags
 	fn addsp(&mut self, ops: &[InstrTarget]) {
-		let val = self.get_operand(&ops[1]) as i8;
-		let res = self.sp.wrapping_add_signed(val as i16);
+    // let b0 = self.peek(self.pc);
+    // let b1 = self.peek(self.pc+1);
+    // let b2 = self.peek(self.pc+2);
+    // let b3 = self.peek(self.pc+3);
+
+    // let s = format!("\
+    //   A: {:02X} F: {:02X} B: {:02X} C: {:02X} D: {:02X} E: {:02X} \
+    //   H: {:02X} L: {:02X} SP: {:04X} PC: 00:{:04X} ({:02X} {:02X} {:02X} {:02X})\
+    // ", self.a, self.f.bits(), self.bc.hi(), self.bc.lo(), self.de.hi(), self.de.lo(),
+    //    self.hl.hi(), self.hl.lo(), self.sp, self.pc, b0, b1, b2, b3
+    // );
+
+		// println!("{s}");
+
+
+		let offset = self.get_operand(&ops[1]) as i8;
+		let res = self.sp.wrapping_add_signed(offset as i16);
 		
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
-		self.set_carry(res);
-		self.set_hcarry16(self.sp, val as u16);
+
+		// TODO: factor this out
+		if offset.is_negative() {
+			self.f.set(Flags::c, res & 0xFF <= self.sp & 0xFF);
+			self.f.set(Flags::h, res & 0x0F <= self.sp & 0x0F);
+		} else {
+			self.set_carry((self.sp & 0xFF).wrapping_add_signed(offset as i16));
+			self.set_hcarry(self.sp as u8, offset as u8);
+		}
 		
 		self.sp = res as u16;
+
+    // let s = format!("\
+    //   A: {:02X} F: {:02X} B: {:02X} C: {:02X} D: {:02X} E: {:02X} \
+    //   H: {:02X} L: {:02X} SP: {:04X} PC: 00:{:04X} ({:02X} {:02X} {:02X} {:02X})\
+    // ", self.a, self.f.bits(), self.bc.hi(), self.bc.lo(), self.de.hi(), self.de.lo(),
+    //    self.hl.hi(), self.hl.lo(), self.sp, self.pc, b0, b1, b2, b3
+    // );
+		// println!("{s}\n");
+
 		self.tick();
 		self.tick();
 	}
@@ -683,7 +722,7 @@ impl Cpu {
 		let val = self.get_operand(&ops[1]);
 		let res = val & (1 << bit);
 
-		self.f.set(Flags::z, res != 0);
+		self.set_z(res);
 		self.f.remove(Flags::n);
 		self.f.insert(Flags::h);
 	}
@@ -691,7 +730,7 @@ impl Cpu {
 	fn res(&mut self, ops: &[InstrTarget]) {
 		let bit = self.get_bit_op(&ops[0]);
 		let val = self.get_operand(&ops[1]);
-		let res = (val & !(1 << bit)) | (val & (1 << bit));
+		let res = val & !(1 << bit);
 
 		self.set_result(&ops[1], res);
 	}
@@ -699,7 +738,7 @@ impl Cpu {
 	fn set(&mut self, ops: &[InstrTarget]) {
 		let bit = self.get_bit_op(&ops[0]);
 		let val = self.get_operand(&ops[1]);
-		let res = val & (1 << bit);
+		let res = val | (1 << bit);
 
 		self.set_result(&ops[1], res);
 	}
@@ -761,7 +800,6 @@ impl Cpu {
 
 	fn retc(&mut self, ops: &[InstrTarget]) {
 		self.tick();
-
 		if self.get_cond(&ops[0]) {
 			self.pc = self.stack_pop();
 			self.tick();
@@ -769,23 +807,22 @@ impl Cpu {
 	}
 
 	fn reti(&mut self) {
-		self.pc = self.stack_pop();
 		self.ime = true;
+		self.pc = self.stack_pop();
 		self.tick();
 	}
 
 	fn rst(&mut self, ops: &[InstrTarget]) {
-		let addr = self.get_interrupt_addr(&ops[0]);
-		self.stack_push(self.pc);
-		self.pc = addr;
 		self.tick();
+		self.stack_push(self.pc);
+		self.pc = self.get_interrupt_addr(&ops[0]);
 	}
 
 	fn di(&mut self) { self.ime = false; self.ime_to_set = false; }
 	fn ei(&mut self) { self.ime_to_set = true; }
 
-	fn stop(&mut self, ops: &[InstrTarget]) {  }
-	fn halt(&mut self, ops: &[InstrTarget]) {  }
+	fn stop(&mut self, ops: &[InstrTarget]) {  } // TODO
+	fn halt(&mut self, ops: &[InstrTarget]) {  } // TODO
 }
 
 

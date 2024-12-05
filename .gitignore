@@ -2,3 +2,5 @@
 /roms
 /tests/roms
 /tests/logs
+*.lib
+/bootroms

@@ -10,14 +10,19 @@ mod cpu_tests {
     let roms = std::fs::read_dir("./tests/roms/").unwrap();
     let logs = std::fs::read_dir("./tests/logs/").unwrap();
 
-    let mut iter = roms.zip(logs).enumerate();
+    let mut roms = roms.map(|e| e.unwrap().path()).collect::<Vec<_>>();
+    let mut logs = logs.map(|e| e.unwrap().path()).collect::<Vec<_>>();
+    roms.sort();
+    logs.sort();
 
-    while let Some((i, (Ok(rom_path), Ok(log_path)))) = iter.next() {
-      if i+1 <= 3 || i+1 == 7 { continue; }
+    let mut iter = roms.iter().zip(logs.iter()).enumerate();
 
-      let rom = std::fs::read(rom_path.path()).unwrap();
-      let log = std::fs::read_to_string(log_path.path()).unwrap();
-      let mut log_lines = log.lines();
+    while let Some((i, (rom_path, log_path))) = iter.next() {
+      if i+1 == 2 || i+1 >= 10 { continue; }
+
+      let rom = std::fs::read(rom_path).unwrap();
+      let log = std::fs::read_to_string(log_path).unwrap();
+      let mut log_lines = log.lines().enumerate();
 
       println!("Executing {rom_path:?} {log_path:?}");
 
@@ -32,7 +37,7 @@ mod cpu_tests {
       let (left, _) = cpu.bus.split_at_mut(rom.len());
       left.copy_from_slice(&rom);
       
-      while let Some(log) = log_lines.next() {
+      while let Some((line, log)) = log_lines.next() {
         let mine = log_cpu(&mut cpu);
         
         let op = cpu.peek(cpu.pc);
@@ -47,7 +52,7 @@ mod cpu_tests {
           println!("{}\nLast OP {:02X}: {:X?}", mine, op, INSTRUCTIONS[op as usize]);
           
           println!("{:0X?}", cpu);
-          println!("{diff}\n{i} lines executed");
+          println!("{diff}\n{} lines executed", line+1);
           panic!()
         }
         
