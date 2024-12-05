@@ -18,7 +18,7 @@ mod cpu_tests {
     let mut iter = roms.iter().zip(logs.iter()).enumerate();
 
     while let Some((i, (rom_path, log_path))) = iter.next() {
-      if i+1 == 2 || i+1 >= 10 { continue; }
+      if i+1 >= 10 { continue; }
 
       let rom = std::fs::read(rom_path).unwrap();
       let log = std::fs::read_to_string(log_path).unwrap();
@@ -27,14 +27,14 @@ mod cpu_tests {
       println!("Executing {rom_path:?} {log_path:?}");
 
       let mut cpu = Cpu::new();
-      cpu.pc = if [6].contains(&(i+1)) {
+      cpu.pc = if [2, 6].contains(&(i+1)) {
         0x101
       } else { 0x100 };
 
-      cpu.bus[0xFF44] = 0x90;
+      cpu.bus.mem[0xFF44] = 0x90;
       let mut last_ten = CircularBuffer::<10, String>::new();
 
-      let (left, _) = cpu.bus.split_at_mut(rom.len());
+      let (left, _) = cpu.bus.mem.split_at_mut(rom.len());
       left.copy_from_slice(&rom);
       
       while let Some((line, log)) = log_lines.next() {
@@ -52,6 +52,7 @@ mod cpu_tests {
           println!("{}\nLast OP {:02X}: {:X?}", mine, op, INSTRUCTIONS[op as usize]);
           
           println!("{:0X?}", cpu);
+          println!("IE {:?} IF {:?}", cpu.bus.inte, cpu.bus.intf);
           println!("{diff}\n{} lines executed", line+1);
           panic!()
         }

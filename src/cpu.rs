@@ -3,7 +3,7 @@ use std::ops::{Not, Shl, Shr, BitAnd, BitOr, BitXor};
 use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
-use crate::instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS};
+use crate::{bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}};
 
 bitflags! {
 	#[derive(Default, Debug)]
@@ -34,8 +34,9 @@ pub struct Cpu {
 	pub pc: u16,
 	pub ime: bool,
 	ime_to_set: bool,
+	int: bool,
 	mcycles: usize,
-	pub bus: [u8; 0x10000],
+	pub bus: Bus,
 }
 
 impl core::fmt::Debug for Cpu {
@@ -57,8 +58,9 @@ impl Cpu {
 			pc: 0x0100,
 			ime: false,
 			ime_to_set: false,
+			int: false,
 			mcycles: 0,
-			bus: [0; 0x10000],
+			bus: Bus::new(),
 		}
 	}
 
@@ -119,7 +121,7 @@ impl Cpu {
 	}
 
 	pub fn peek(&mut self, addr: u16) -> u8 {
-		self.bus[addr as usize]
+		self.bus.read(addr)
 	}
 
 	fn read(&mut self, addr: u16) -> u8 {
@@ -132,7 +134,7 @@ impl Cpu {
 	}
 	fn write(&mut self, addr: u16, val: u8) {
 		// println!("Wrote {val:02X} to {addr:04X}");
-		self.bus[addr as usize] = val;
+		self.bus.write(addr, val);
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -162,6 +164,12 @@ impl Cpu {
 
 	fn tick(&mut self) {
 		self.mcycles += 1;
+		
+		// if self.bus.timer.int_request.take().is_some() {
+		// 	self.bus.intf.insert(IFlags::timer);
+		// }
+
+		self.bus.timer.tick();
 	}
 
 	pub fn step(&mut self) {
@@ -169,8 +177,19 @@ impl Cpu {
 			self.ime = true;
 			self.ime_to_set = false;
 		} else if self.ime {
-			// handle interrupts
+			self.handle_interrupts();
 		}
+		
+		if self.int {
+			self.tick();
+			self.tick();
+
+			self.stack_push(self.pc);
+			self.pc = 0x50;
+			self.tick();
+			return;
+		}
+
 
 		let opcode = self.pc_fetch();
 		
@@ -181,6 +200,40 @@ impl Cpu {
 		} else { 
 			let instr = &INSTRUCTIONS[opcode as usize];
 			self.execute_no_prefix(instr)
+		}
+	}
+
+	fn handle_interrupts(&mut self) {
+		println!("faggot");
+		let flags = self.bus.inte.iter()
+		.zip(self.bus.intf.iter());
+		for (ief, iff) in flags {
+			println!("Looking for interrupts IE {:?} IF {:?}", ief, iff);
+			if !iff.is_empty() && !ief.is_empty() {
+				let addr = match iff {
+					IFlags::vblank => 0x40,
+					IFlags::lcd    => 0x48,
+					IFlags::timer  => 0x50,
+					IFlags::serial => 0x58, 
+					IFlags::joypad => 0x60,
+					_ => unreachable!(),
+				};
+				println!("HANDLING INTERRUPT {:?}", iff);
+
+				self.bus.intf.remove(iff);
+				self.ime = false;
+
+				// 2 wait states are executed
+				// self.tick();
+				// self.tick();
+
+				// self.stack_push(self.pc);
+				// self.pc = addr;
+				// self.tick();
+				self.int = true;
+				
+				break;
+			}
 		}
 	}
 

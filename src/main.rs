@@ -65,7 +65,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   //let cart = Cart::new(&rom);
   //println!("{:?}", cart);
 
-  let (left, _) = emu.bus.split_at_mut(rom.len());
+  let (left, _) = emu.bus.mem.split_at_mut(rom.len());
   left.copy_from_slice(&rom);
 
   let texture_creator = canvas.texture_creator();
@@ -86,9 +86,9 @@ fn main() -> Result<(), Box<dyn Error>> {
       for i in 0..32*32 {
         let x = i % 32;
         let y = i / 32;
-        let tile_id = emu.bus[0x9800 + y*16 + x] as usize;
+        let tile_id = emu.bus.mem[0x9800 + y*16 + x] as usize;
         let tile_start = 0x8000 + tile_id;
-        let tile = &emu.bus[tile_start..tile_start+16];
+        let tile = &emu.bus.mem[tile_start..tile_start+16];
         framebuf.set_tile(x, y, &tile);
       }
 
@@ -99,8 +99,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
   }
 
-  println!("Tileset {:?}", &emu.bus[0x8000..0x9800]);
-  println!("Tilemap {:?}", &emu.bus[0x9800..0xA000]);
+  println!("Tileset {:?}", &emu.bus.mem[0x8000..0x9800]);
+  println!("Tilemap {:?}", &emu.bus.mem[0x9800..0xA000]);
 
   Ok(())
 }
