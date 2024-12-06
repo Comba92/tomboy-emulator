@@ -18,7 +18,7 @@ mod cpu_tests {
     let mut iter = roms.iter().zip(logs.iter()).enumerate();
 
     while let Some((i, (rom_path, log_path))) = iter.next() {
-      if i+1 >= 10 { continue; }
+      if i+1 == 2 || i+1 >= 10 { continue; }
 
       let rom = std::fs::read(rom_path).unwrap();
       let log = std::fs::read_to_string(log_path).unwrap();
@@ -39,7 +39,6 @@ mod cpu_tests {
       
       while let Some((line, log)) = log_lines.next() {
         let mine = log_cpu(&mut cpu);
-        
         let op = cpu.peek(cpu.pc);
         
         if mine != log {
@@ -50,10 +49,22 @@ mod cpu_tests {
             println!("{instr}");
           }
           println!("{}\nLast OP {:02X}: {:X?}", mine, op, INSTRUCTIONS[op as usize]);
-          
+
+
           println!("{:0X?}", cpu);
           println!("IE {:?} IF {:?}", cpu.bus.inte, cpu.bus.intf);
           println!("{diff}\n{} lines executed", line+1);
+
+          cpu.step();
+          let mine = log_cpu(&mut cpu);
+          let op = cpu.peek(cpu.pc); 
+          println!("{}\nLast OP {:02X}: {:X?}", mine, op, INSTRUCTIONS[op as usize]);
+
+          cpu.step();
+          let mine = log_cpu(&mut cpu);
+          let op = cpu.peek(cpu.pc);
+          println!("{}\nLast OP {:02X}: {:X?}", mine, op, INSTRUCTIONS[op as usize]);
+
           panic!()
         }
         

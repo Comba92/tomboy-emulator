@@ -45,7 +45,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
 impl Bus {
   pub fn new() -> Self {
     Self { 
-      mem: [0; 0x10000], 
+      mem: [0; 0x10000],
       ppu: Ppu::default(), 
       timer: Timer::default(),
       inte: IFlags::empty(), 

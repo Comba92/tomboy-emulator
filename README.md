@@ -1,6 +1,4 @@
-# Specs
-Cpu 4.194394 Mhz
-Resolution 160x144
+# TODO
 
 # Resources
 ## CPU

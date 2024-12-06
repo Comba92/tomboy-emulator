@@ -34,7 +34,6 @@ pub struct Cpu {
 	pub pc: u16,
 	pub ime: bool,
 	ime_to_set: bool,
-	int: bool,
 	mcycles: usize,
 	pub bus: Bus,
 }
@@ -58,7 +57,6 @@ impl Cpu {
 			pc: 0x0100,
 			ime: false,
 			ime_to_set: false,
-			int: false,
 			mcycles: 0,
 			bus: Bus::new(),
 		}
@@ -164,33 +162,11 @@ impl Cpu {
 
 	fn tick(&mut self) {
 		self.mcycles += 1;
-		
-		// if self.bus.timer.int_request.take().is_some() {
-		// 	self.bus.intf.insert(IFlags::timer);
-		// }
 
 		self.bus.timer.tick();
 	}
 
 	pub fn step(&mut self) {
-		if self.ime_to_set {
-			self.ime = true;
-			self.ime_to_set = false;
-		} else if self.ime {
-			self.handle_interrupts();
-		}
-		
-		if self.int {
-			self.tick();
-			self.tick();
-
-			self.stack_push(self.pc);
-			self.pc = 0x50;
-			self.tick();
-			return;
-		}
-
-
 		let opcode = self.pc_fetch();
 		
 		if opcode == 0xCB {
@@ -201,12 +177,19 @@ impl Cpu {
 			let instr = &INSTRUCTIONS[opcode as usize];
 			self.execute_no_prefix(instr)
 		}
+
+		if self.ime_to_set {
+			self.ime = true;
+			self.ime_to_set = false;
+		} else if self.ime {
+			self.handle_interrupts();
+		}
 	}
 
 	fn handle_interrupts(&mut self) {
-		println!("faggot");
 		let flags = self.bus.inte.iter()
 		.zip(self.bus.intf.iter());
+
 		for (ief, iff) in flags {
 			println!("Looking for interrupts IE {:?} IF {:?}", ief, iff);
 			if !iff.is_empty() && !ief.is_empty() {
@@ -224,14 +207,14 @@ impl Cpu {
 				self.ime = false;
 
 				// 2 wait states are executed
-				// self.tick();
-				// self.tick();
+				self.tick();
+				self.tick();
 
-				// self.stack_push(self.pc);
-				// self.pc = addr;
-				// self.tick();
-				self.int = true;
+				self.stack_push(self.pc);
+				self.pc = addr;
+				self.tick();
 				
+				// we don't want to handle any more interrupt
 				break;
 			}
 		}
@@ -647,21 +630,6 @@ impl Cpu {
 	// 0xe8
 	// https://stackoverflow.com/questions/5159603/gbz80-how-does-ld-hl-spe-affect-h-and-c-flags
 	fn addsp(&mut self, ops: &[InstrTarget]) {
-    // let b0 = self.peek(self.pc);
-    // let b1 = self.peek(self.pc+1);
-    // let b2 = self.peek(self.pc+2);
-    // let b3 = self.peek(self.pc+3);
-
-    // let s = format!("\
-    //   A: {:02X} F: {:02X} B: {:02X} C: {:02X} D: {:02X} E: {:02X} \
-    //   H: {:02X} L: {:02X} SP: {:04X} PC: 00:{:04X} ({:02X} {:02X} {:02X} {:02X})\
-    // ", self.a, self.f.bits(), self.bc.hi(), self.bc.lo(), self.de.hi(), self.de.lo(),
-    //    self.hl.hi(), self.hl.lo(), self.sp, self.pc, b0, b1, b2, b3
-    // );
-
-		// println!("{s}");
-
-
 		let offset = self.get_operand(&ops[1]) as i8;
 		let res = self.sp.wrapping_add_signed(offset as i16);
 		
@@ -678,14 +646,6 @@ impl Cpu {
 		}
 		
 		self.sp = res as u16;
-
-    // let s = format!("\
-    //   A: {:02X} F: {:02X} B: {:02X} C: {:02X} D: {:02X} E: {:02X} \
-    //   H: {:02X} L: {:02X} SP: {:04X} PC: 00:{:04X} ({:02X} {:02X} {:02X} {:02X})\
-    // ", self.a, self.f.bits(), self.bc.hi(), self.bc.lo(), self.de.hi(), self.de.lo(),
-    //    self.hl.hi(), self.hl.lo(), self.sp, self.pc, b0, b1, b2, b3
-    // );
-		// println!("{s}\n");
 
 		self.tick();
 		self.tick();

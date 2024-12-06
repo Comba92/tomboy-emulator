@@ -32,7 +32,7 @@ impl Timer {
             self.div = self.div.wrapping_add(1);
         }
 
-        if (self.cycles + 0x100) % self.tima_clock() == 0 {
+        if (self.cycles + 0x100) % self.tima_clock() == 0 && self.tac.contains(Flags::enable) {
             let (res, overflow) = self.tima.overflowing_add(1);
             let tma = self.tma_write.take().unwrap_or(self.tma);
             self.tima = if overflow { tma } else { res };

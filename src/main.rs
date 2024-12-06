@@ -1,6 +1,6 @@
 use std::{error::Error, fs};
 
-use sdl2::event::Event;
+use sdl2::{event::Event, pixels::PixelFormatEnum};
 use tomboy_emulator::cpu::Cpu;
 
 const PALETTE: [(u8, u8, u8); 4] = [
@@ -38,30 +38,30 @@ impl FrameBuffer {
 
 pub fn set_tile(&mut self, x: usize, y: usize, tile: &[u8]) {
     for row in 0..8 {
-        let plane0 = tile[row];
-        let plane1 = tile[row + 8];
+      let plane0 = tile[row*2];
+      let plane1 = tile[row*2 + 1];
 
-        for bit in 0..8 {
-            let bit0 = (plane0 >> bit) & 1;
-            let bit1 = ((plane1 >> bit) & 1) << 1;
-            let color_idx = bit1 | bit0;
-            self.set_pixel(x + bit, y + row, color_idx);
-        }
+      for bit in 0..8 {
+          let bit0 = (plane0 >> bit) & 1;
+          let bit1 = ((plane1 >> bit) & 1) << 1;
+          let color_idx = bit1 | bit0;
+          self.set_pixel(x + 7-bit, y + row, color_idx);
+      }
     }
-}
+  }
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
   let video = sdl.video()?;
-  let mut canvas = video.window("TomboyEmu", 800, 600)
+  let mut canvas = video.window("TomboyEmu", 48*16*3, 8*16*3)
     .position_centered().build()?.into_canvas()
     .accelerated().target_texture().build()?;
 
   let mut events = sdl.event_pump()?;
 
   let mut emu = Cpu::new();
-  let rom = fs::read("./bootroms/dmg_boot.bin")?;
+  let rom = fs::read("./tests/roms/01-special.gb")?;
   //let cart = Cart::new(&rom);
   //println!("{:?}", cart);
 
@@ -70,9 +70,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let texture_creator = canvas.texture_creator();
   let mut texture = texture_creator
-    .create_texture_target(None, 32*8, 32*8)?;
+    .create_texture_target(PixelFormatEnum::RGBA32, 48*16, 8*16)?;
 
-  let mut framebuf = FrameBuffer::new(32*8, 32*8);
+  let mut framebuf = FrameBuffer::new(48*16, 8*16);
 
   'running: loop {
     emu.step();
@@ -83,13 +83,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => {}
       }
 
-      for i in 0..32*32 {
-        let x = i % 32;
-        let y = i / 32;
-        let tile_id = emu.bus.mem[0x9800 + y*16 + x] as usize;
-        let tile_start = 0x8000 + tile_id;
+      for i in 0..384 {
+        let x = i % 48;
+        let y = i / 48;
+        let tile_start = 0x8000 + i*16;
         let tile = &emu.bus.mem[tile_start..tile_start+16];
-        framebuf.set_tile(x, y, &tile);
+        framebuf.set_tile(x*16, y*16, &tile);
       }
 
       canvas.clear();
