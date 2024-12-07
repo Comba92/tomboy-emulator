@@ -21,7 +21,7 @@ pub struct Bus {
 }
 
 enum BusTarget {
-  Rom, VRam, ExRam, WRam, Oam, Unused, Ppu, IO, HRam, IF, IE,
+  Rom, VRam, ExRam, WRam, Oam, Unused, Ppu, Timer, IO, HRam, IF, IE,
 }
 
 fn map_addr(addr: u16) -> (BusTarget, u16) {
@@ -35,6 +35,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
     0xFE00..=0xFE9F => (Oam, addr - 0xFE00),
     0xFEA0..=0xFEFF => (Unused, addr),
     0xFF40..=0xFF4B => (Ppu, addr),
+    0xFF04..=0xFF07 => (Timer, addr),
     0xFF0F => (IF, addr),
     0xFF00..=0xFF7F => (IO, addr),
     0xFF80..=0xFFFE => (HRam, addr - 0xFF80),
@@ -58,6 +59,7 @@ impl Bus {
     match addr {
       // BusTarget::Ppu => self.ppu.read_reg(addr),
       0xFF04..=0xFF07 => self.timer.read_reg(addr),
+      0xFF40..=0xFF4B => self.ppu.read_reg(addr),
       0xFF0F => self.intf.bits(),
       0xFFFF => self.inte.bits(),
       _ => self.mem[addr as usize],
@@ -69,6 +71,7 @@ impl Bus {
     match addr {
       // BusTarget::Ppu => self.ppu.write_reg(addr, val),
       0xFF04..=0xFF07 => self.timer.write_reg(addr, val),
+      0xFF40..=0xFF4B => self.ppu.write_reg(addr, val),
       0xFF0F => {
         println!("Wrote to IF");
         self.intf = IFlags::from_bits_truncate(val & 0b1_1111);

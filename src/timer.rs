@@ -52,7 +52,7 @@ impl Timer {
         }
     }
 
-    pub fn read_reg(&mut self, addr: u16) -> u8 {
+    pub fn read_reg(&self, addr: u16) -> u8 {
         match addr {
             0xFF04 => self.div,
             0xFF05 => self.tima,

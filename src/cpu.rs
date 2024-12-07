@@ -164,12 +164,12 @@ impl Cpu {
 		self.mcycles += 1;
 		self.bus.timer.tick();
 
-		// if self.bus.timer.int_request.take().is_some() {
-		// 	self.bus.intf.insert(IFlags::timer);
-		// }
-		// if self.bus.ppu.stat_request.take().is_some() {
-		// 	self.bus.intf.insert(IFlags::lcd);
-		// }
+		if self.bus.timer.int_request.take().is_some() {
+			self.bus.intf.insert(IFlags::timer);
+		}
+		if self.bus.ppu.stat_request.take().is_some() {
+			self.bus.intf.insert(IFlags::lcd);
+		}
 		// if self.bus.ppu.vblank_request.take().is_some() {
 		// 	self.bus.intf.insert(IFlags::vblank);
 		// }

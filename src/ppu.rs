@@ -29,6 +29,10 @@ bitflags! {
 
 pub struct Ppu {
   lcd: FrameBuffer,
+  bg_scanline: [u8; 160],
+  wnd_scanline: [u8; 160],
+  spr_scanline: [u8; 160],
+
   mode: PpuMode,
   ctrl: Ctrl,
   ly: u8,
@@ -48,9 +52,29 @@ pub struct Ppu {
 }
 
 impl Default for Ppu {
-    fn default() -> Self {
-        Self { lcd: FrameBuffer::gameboy_lcd(), mode: Default::default(), ctrl: Default::default(), ly: Default::default(), lyc: Default::default(), stat: Default::default(), scy: Default::default(), scx: Default::default(), wy: Default::default(), wx: Default::default(), bg_palette: Default::default(), tcycles: Default::default(), scanlines: Default::default(), stat_request: None, vblank_request: None }
+  fn default() -> Self {
+    Self { 
+      lcd: FrameBuffer::gameboy_lcd(), 
+      bg_scanline: [0; 160],
+      wnd_scanline: [0; 160],
+      spr_scanline: [0; 160],
+
+      mode: Default::default(),
+      ctrl: Default::default(), 
+      ly: Default::default(),
+      lyc: Default::default(),
+      stat: Default::default(), 
+      scy: Default::default(), 
+      scx: Default::default(), 
+      wy: Default::default(), 
+      wx: Default::default(), 
+      bg_palette: Default::default(), 
+      tcycles: Default::default(), 
+      scanlines: Default::default(), 
+      stat_request: None, 
+      vblank_request: None
     }
+  }
 }
 
 #[derive(Default)]
@@ -65,8 +89,10 @@ enum PpuMode {
 impl Ppu {
   pub fn step(&mut self) {
     self.tcycles += 1;
-    if self.tcycles > 80 {
+    if self.tcycles == 80 {
       self.mode = PpuMode::Mode3;
+    } else if self.tcycles == 172 {
+      self.mode = PpuMode::Mode0;
     }
 
     if self.tcycles > 204 {
@@ -91,12 +117,13 @@ impl Ppu {
     }
   }
 
-  fn tile_addr(&self, tile_id: u8) -> u16 {
+
+  pub fn tile_addr(&self, tile_id: u8) -> u16 {
     match self.ctrl.contains(Ctrl::tiles_addr) {
-      true  => 0x8000 + tile_id as u16,
+      true  => 0x8000 + 16*tile_id as u16,
       false => {
         let offset = tile_id as i8;
-        (0x9000 + offset as i32) as u16
+        (0x9000 + 16*offset as i32) as u16
       }
     }
   }

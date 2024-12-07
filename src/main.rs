@@ -7,17 +7,17 @@ fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
   let video = sdl.video()?;
 
-  const WIN_WIDTH: u32 = 32*16;
-  const WIN_HEIGHT: u32 = 12*16;
+  const WIN_WIDTH: u32 = 20*8;
+  const WIN_HEIGHT: u32 = 18*8;
 
-  let mut canvas = video.window("TomboyEmu", WIN_WIDTH*3, WIN_HEIGHT*3)
+  let mut canvas = video.window("TomboyEmu", WIN_WIDTH*4, WIN_HEIGHT*4)
     .position_centered().build()?.into_canvas()
     .accelerated().target_texture().build()?;
 
   let mut events = sdl.event_pump()?;
 
   let mut emu = Cpu::new();
-  let rom = fs::read("./roms/Super Mario Land (JUE) (V1.1) [!].gb")?;
+  let rom = fs::read("./tests/roms/02-interrupts.gb")?;
   
   //let cart = Cart::new(&rom);
   //println!("{:?}", cart);
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut framebuf = FrameBuffer::new(WIN_WIDTH as usize, WIN_HEIGHT as usize);
 
   'running: loop {
-    while emu.bus.ppu.vblank_request.is_some() {
+    for i in 0..10_000_000 {
       emu.step();
     }
 
@@ -42,12 +42,22 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => {}
       }
 
-      for i in 0..384 {
-        let x = i % (WIN_WIDTH as usize/16);
-        let y = i / (WIN_WIDTH as usize/16);
-        let tile_start = 0x8000 + i*16;
-        let tile = &emu.bus.mem[tile_start..tile_start+16];
-        framebuf.set_tile(x*16, y*16, &tile);
+      // for i in 0..384 {
+      //   let x = i % (WIN_WIDTH as usize/16);
+      //   let y = i / (WIN_WIDTH as usize/16);
+      //   let tile_start = 0x8000 + i*16;
+      //   let tile = &emu.bus.mem[tile_start..tile_start+16];
+      //   framebuf.set_tile(x*16, y*16, &tile);
+      // }
+
+      for i in 0..20*18 {
+        let x = i % 20;
+        let y = i / 20;
+
+        let tile_id = emu.bus.read(0x9800 + y*20 + x);
+        let tile_addr = emu.bus.ppu.tile_addr(tile_id) as usize;
+        let tile = &emu.bus.mem[tile_addr..tile_addr+16];
+        framebuf.set_tile(x as usize*8, y as usize*8, &tile);
       }
 
       canvas.clear();
@@ -56,11 +66,6 @@ fn main() -> Result<(), Box<dyn Error>> {
       canvas.present();
     }
   }
-
-  println!("{:?}", emu);
-  println!("IE {:?} IF {:?}", emu.bus.inte, emu.bus.intf);
-  println!("Tileset {:?}", &emu.bus.mem[0x8000..0x9800]);
-  println!("Tilemap {:?}", &emu.bus.mem[0x9800..0xA000]);
 
   Ok(())
 }
