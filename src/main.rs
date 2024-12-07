@@ -1,7 +1,7 @@
 use std::{error::Error, fs};
 
 use sdl2::{event::Event, pixels::PixelFormatEnum};
-use tomboy_emulator::{cpu::Cpu, frame::FrameBuffer};
+use tomboy_emulator::{bus::IFlags, cpu::Cpu, frame::{self, FrameBuffer}};
 
 fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
@@ -17,13 +17,15 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut events = sdl.event_pump()?;
 
   let mut emu = Cpu::new();
-  let rom = fs::read("./tests/roms/02-interrupts.gb")?;
+  let rom = fs::read("./tests/roms/01-special.gb")?;
   
   //let cart = Cart::new(&rom);
   //println!("{:?}", cart);
 
-  let (left, _) = emu.bus.mem.split_at_mut(rom.len());
+  let mut bus = emu.bus.borrow_mut();
+  let (left, _) = bus.mem.split_at_mut(rom.len());
   left.copy_from_slice(&rom);
+  drop(bus);
 
   let texture_creator = canvas.texture_creator();
   let mut texture = texture_creator
@@ -32,7 +34,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut framebuf = FrameBuffer::new(WIN_WIDTH as usize, WIN_HEIGHT as usize);
 
   'running: loop {
-    for i in 0..10_000_000 {
+    while emu.ppu.vblank.take().is_none() {
       emu.step();
     }
 
@@ -54,9 +56,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let x = i % 20;
         let y = i / 20;
 
-        let tile_id = emu.bus.read(0x9800 + y*20 + x);
-        let tile_addr = emu.bus.ppu.tile_addr(tile_id) as usize;
-        let tile = &emu.bus.mem[tile_addr..tile_addr+16];
+        let tile_id = emu.read(0x9800 + y*20 + x);
+        let tile_addr = emu.ppu.tile_addr(tile_id) as usize;
+        let tile = &emu.bus.borrow().mem[tile_addr..tile_addr+16];
         framebuf.set_tile(x as usize*8, y as usize*8, &tile);
       }
 

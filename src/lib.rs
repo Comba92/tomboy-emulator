@@ -8,3 +8,4 @@ pub mod ppu;
 pub mod frame;
 
 pub mod cart;
+pub mod mapper;

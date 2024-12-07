@@ -1,10 +1,11 @@
-use core::str;
+use core::{cmp, hash, str};
 use std::{collections::HashMap, sync::LazyLock};
 
 #[allow(unused)]
 #[derive(Debug)]
 pub struct Cart {
     cart_type: &'static str,
+    mapper_code: u8,
     title: String,
     licensee: &'static str,
     licensee_new: &'static str,
@@ -24,9 +25,15 @@ const NINTENDO_LOGO: [u8; 48] = [
 ];
 
 #[derive(Debug)]
-pub enum CgbMode { Monochrome, Retrocompatible, ColorOnly }
+pub enum CgbMode { Monochrome, CgbEnhanced, ColorOnly }
 #[derive(Debug)]
 pub enum Region { Japan, Overseas } 
+
+fn parse_info<Info: cmp::Eq + hash::Hash, Parsed: Copy>(code: Info, map: &HashMap<Info, Parsed>, err: &'static str) -> Result<Parsed, &'static str> {
+    map.get_key_value(&code)
+    .map(|o| *o.1)
+    .ok_or(err)
+}
 
 impl Cart {
     pub fn new(bytes: &[u8]) -> Result<Self, &str> {
@@ -41,33 +48,30 @@ impl Cart {
         let title = str
             ::from_utf8(&bytes[0x134..0x143])
             .map(|s| String::from(s))
-            .map_err(|_| "No valid title")?;
+            .map_err(|_| "Invalid title")?
+            .chars()
+            .filter(|c| !c.is_control())
+            .collect();
 
         let cgb_mode = match bytes[0x143] {
             0x80 => CgbMode::Monochrome,
-            0xC0 => CgbMode::Retrocompatible,
+            0xC0 => CgbMode::CgbEnhanced,
             _ => CgbMode::Monochrome,
         };
 
         let sgb_support = bytes[0x146] != 0;
 
-        let cart_type_id = bytes[0x147];
-        let cart_type = CART_TYPE_MAP
-            .get_key_value(&cart_type_id)
-            .map(|o| *o.1)
-            .ok_or("No valid cart type")?;
+        let mapper_code = bytes[0x147];
+        let cart_type = 
+            parse_info(mapper_code, &CART_TYPE_MAP, "Invalid cart type")?;
 
         let rom_size_id = bytes[0x148];
-        let rom_size = 16*1024 * ROM_SIZE_MAP
-            .get_key_value(&rom_size_id)
-            .map(|o| *o.1)
-            .ok_or("No valid ROM size")?;
+        let rom_size = 
+            16*1024*parse_info(rom_size_id, &ROM_SIZE_MAP, "Invalid ROM size")?;
 
         let ram_size_id = bytes[0x149];
-        let ram_size = 8*1024 * RAM_SIZE_MAP
-            .get_key_value(&ram_size_id)
-            .map(|o| *o.1)
-            .ok_or("No valid RAM size")?;
+        let ram_size = 
+            8*1024*parse_info(ram_size_id, &RAM_SIZE_MAP, "Invalid RAM size")?;
 
         let region = match bytes[0x14a] != 0 {
             false => Region::Japan,
@@ -75,19 +79,15 @@ impl Cart {
         };
 
         let licensee_id = bytes[0x14b];
-        let licensee = LICENSEE_MAP
-            .get_key_value(&licensee_id)
-            .map(|o| *o.1)
-            .ok_or("No valid old licensee")?;
+        let licensee = 
+            parse_info(licensee_id, &LICENSEE_MAP, "Invalid old licensee")?;
 
         let licensee_new = if licensee_id == 0x33 {
             let licensee_new_str = str
                 ::from_utf8(&bytes[0x144..=0x145])
-                .map_err(|_| "No valid new licensee")?;
-            let licensee_new = NEW_LICESEE_MAP
-                .get_key_value(licensee_new_str)
-                .map(|s| *s.1)
-                .ok_or("No valid new licensee")?;
+                .map_err(|_| "Invalid new licensee")?;
+            let licensee_new = 
+                parse_info(licensee_new_str, &NEW_LICESEE_MAP, "Invalid new licensee")?;
             licensee_new
         } else {
             NEW_LICESEE_MAP.get_key_value("00").unwrap().1
@@ -96,8 +96,18 @@ impl Cart {
         let version = bytes[0x14c];
         let checksum = bytes[0x14d];
 
+        let mut check = 0u8;
+        for addr in 0x0134..=0x14C {
+            check = check.wrapping_sub(bytes[addr]).wrapping_sub(1);
+        }
+
+        if check != checksum {
+            return Err("Invalid checksum");
+        }
+
         Ok(Self {
             title,
+            mapper_code,
             cgb_mode,
             sgb_support,
             cart_type,

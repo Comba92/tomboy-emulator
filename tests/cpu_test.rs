@@ -34,6 +34,7 @@ mod cpu_tests {
       cpu.bus.mem[0xFF44] = 0x90;
       let mut last_ten = CircularBuffer::<10, String>::new();
 
+      
       let (left, _) = cpu.bus.mem.split_at_mut(rom.len());
       left.copy_from_slice(&rom);
       

@@ -3,7 +3,7 @@ use std::ops::{Not, Shl, Shr, BitAnd, BitOr, BitXor};
 use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
-use crate::{bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}};
+use crate::{bus::{Bus, IFlags, SharedBus}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, ppu::Ppu};
 
 bitflags! {
 	#[derive(Default, Debug)]
@@ -35,7 +35,9 @@ pub struct Cpu {
 	pub ime: bool,
 	ime_to_set: bool,
 	mcycles: usize,
-	pub bus: Bus,
+
+	pub bus: SharedBus,
+	pub ppu: Ppu,
 }
 
 impl core::fmt::Debug for Cpu {
@@ -47,6 +49,8 @@ impl core::fmt::Debug for Cpu {
 
 impl Cpu {
 	pub fn new() -> Self {
+		let bus = Bus::new();
+
 		Self {
 			a: 1,
 			f: Flags::from_bits_truncate(0xB0),
@@ -58,7 +62,8 @@ impl Cpu {
 			ime: false,
 			ime_to_set: false,
 			mcycles: 0,
-			bus: Bus::new(),
+			ppu: Ppu::new(bus.clone()),
+			bus,
 		}
 	}
 
@@ -119,10 +124,10 @@ impl Cpu {
 	}
 
 	pub fn peek(&mut self, addr: u16) -> u8 {
-		self.bus.read(addr)
+		self.bus.borrow().read(addr)
 	}
 
-	fn read(&mut self, addr: u16) -> u8 {
+	pub fn read(&mut self, addr: u16) -> u8 {
 		let res = self.peek(addr);
 		self.tick();
 		res
@@ -130,9 +135,9 @@ impl Cpu {
 	fn read16(&mut self, addr: u16) -> u16 {
 		u16::from_le_bytes([self.read(addr), self.read(addr.wrapping_add(1))])
 	}
-	fn write(&mut self, addr: u16, val: u8) {
+	pub fn write(&mut self, addr: u16, val: u8) {
 		// println!("Wrote {val:02X} to {addr:04X}");
-		self.bus.write(addr, val);
+		self.bus.borrow_mut().write(addr, val);
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -162,17 +167,10 @@ impl Cpu {
 
 	fn tick(&mut self) {
 		self.mcycles += 1;
-		self.bus.timer.tick();
+		for _ in 0..4 { self.ppu.tick(); }
 
-		if self.bus.timer.int_request.take().is_some() {
-			self.bus.intf.insert(IFlags::timer);
-		}
-		if self.bus.ppu.stat_request.take().is_some() {
-			self.bus.intf.insert(IFlags::lcd);
-		}
-		// if self.bus.ppu.vblank_request.take().is_some() {
-		// 	self.bus.intf.insert(IFlags::vblank);
-		// }
+		let mut bus = self.bus.borrow_mut();
+		bus.timer.tick();
 	}
 
 	pub fn step(&mut self) {
@@ -196,8 +194,9 @@ impl Cpu {
 	}
 
 	fn handle_interrupts(&mut self) {
-		let flags = self.bus.inte.iter()
-		.zip(self.bus.intf.iter());
+		let mut bus = self.bus.borrow_mut();
+		let flags = bus.inte.iter()
+		.zip(bus.intf.iter());
 
 		for (ief, iff) in flags {
 			println!("Looking for interrupts IE {:?} IF {:?}", ief, iff);
@@ -212,7 +211,9 @@ impl Cpu {
 				};
 				println!("HANDLING INTERRUPT {:?}", iff);
 
-				self.bus.intf.remove(iff);
+				bus.intf.remove(iff);
+				drop(bus);
+
 				self.ime = false;
 
 				// 2 wait states are executed
