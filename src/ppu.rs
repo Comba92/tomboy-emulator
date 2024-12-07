@@ -81,7 +81,8 @@ impl Registers {
       0xFF4A => self.wy = val,
       0xFF4B => self.wx = val,
       0xFF47 => self.bg_palette = val,
-      _ => eprintln!("Ppu register write {addr:04X} not implemented"),
+      // _ => eprintln!("Ppu register write {addr:04X} not implemented"),
+      _ => {}
     }
   }
 }
@@ -99,7 +100,7 @@ enum PpuMode {
 pub struct Ppu {
   pub lcd: FrameBuffer,
   bg_scanline: [u8; 160],
-  wnd_scanline: [u8; 160],
+  wind_scanline: [u8; 160],
   spr_scanline: [u8; 160],
 
   mode: PpuMode,
@@ -115,7 +116,7 @@ impl Ppu {
     Self {
       lcd: FrameBuffer::gameboy_lcd(), 
       bg_scanline:  [0; 160],
-      wnd_scanline: [0; 160],
+      wind_scanline: [0; 160],
       spr_scanline: [0; 160],
 
       mode: Default::default(),
@@ -129,13 +130,20 @@ impl Ppu {
 
   pub fn tick(&mut self) {
     self.tcycles += 1;
+
+    if self.scanlines == 0 && self.tcycles == 81
+    && self.ctrl().contains(Ctrl::ppu_on) {
+      self.render_bg();
+      self.render_wind();
+    }
+
     if self.tcycles > 456 {
       self.tcycles = 0;
       self.scanlines += 1;
       self.set_ly(self.read(LY) + 1);
 
       if self.scanlines == 144 {
-        self.bus.borrow_mut().intf.insert(IFlags::vblank);
+        self.bus.borrow().intf.borrow_mut().insert(IFlags::vblank);
         self.vblank = Some(());
       }
       if self.scanlines > 154 {
@@ -146,11 +154,15 @@ impl Ppu {
   }
 
   fn render_bg(&mut self) {
+    let scx = self.read(SCX) as u16/8;
+    let scy = self.read(SCY) as u16/8;
+    let tilemap = self.bg_tilemap();
+
     for y in 0..144/8 {
       for x in 0..160/8 {
-        let tilemap_addr = self.bg_tilemap() 
-          + ((self.read(SCY) as u16/8 + y) % 256) * (144/8)
-          + ((self.read(SCX) as u16/8 + x) % 256);
+        let tilemap_addr = tilemap
+          + ((scy + y) % 32) * 32 
+          + ((scx + x) % 32);
 
         let tile_id = self.read(tilemap_addr);
         let tileset_addr = self.tile_addr(tile_id) as usize;
@@ -159,6 +171,30 @@ impl Ppu {
         self.lcd.set_tile(8*x as usize, 8*y as usize, tile);
       }
     }
+  }
+
+  fn render_wind(&mut self) {
+    // let wx = self.read(WX).wrapping_sub(7) as u16/8;
+    // let wy = self.read(WY) as u16/8;
+    // let tilemap = self.wind_tilemap();
+
+    // for y in wy..144/8 {
+    //   for x in wx..160/8 {
+    //     if wx + x > 166 || wy + y > 143 {
+    //       continue;
+    //     }
+
+    //     let tilemap_addr = tilemap
+    //       + ((wy + y) % 32) * 32 
+    //       + ((wx + x) % 32);
+
+    //     let tile_id = self.read(tilemap_addr);
+    //     let tileset_addr = self.tile_addr(tile_id) as usize;
+    //     let tile = &self.bus.borrow().mem[tileset_addr..tileset_addr+16];
+
+    //     self.lcd.set_tile(8*x as usize, 8*y as usize, tile);
+    //   }
+    // }
   }
 
   pub fn read(&self, addr: u16) -> u8 {
@@ -177,6 +213,13 @@ impl Ppu {
     match self.ctrl().contains(Ctrl::bg_tilemap) {
       false => 0x9800,
       true => 0x9C00,
+    }
+  }
+
+  fn wind_tilemap(&self) -> u16 {
+    match self.ctrl().contains(Ctrl::wind_tilemap) {
+      false => 0x9800,
+      true  => 0x9C00,
     }
   }
 

@@ -4,6 +4,8 @@
 
 use bitflags::bitflags;
 
+use crate::bus::{IFlags, InterruptFlags};
+
 bitflags! {
     #[derive(Default)]
     struct Flags: u8 {
@@ -12,7 +14,6 @@ bitflags! {
     }
 }
 
-#[derive(Default)]
 pub struct Timer {
     div: u8,
     tima: u8,
@@ -20,11 +21,22 @@ pub struct Timer {
     tma_write: Option<u8>,
     tac: Flags,
     cycles: usize,
-
-    pub int_request: Option<()>,
+    intf: InterruptFlags,
 }
 
 impl Timer {
+    pub fn new(intf: InterruptFlags) -> Self {
+        Self {
+            div: 0,
+            tima: 0,
+            tma: 0,
+            tma_write: None,
+            tac: Flags::default(),
+            cycles: 0,
+            intf,
+        }
+    }
+
     pub fn tick(&mut self) {
         self.cycles += 1;
 
@@ -36,7 +48,8 @@ impl Timer {
             let (res, overflow) = self.tima.overflowing_add(1);
             let tma = self.tma_write.take().unwrap_or(self.tma);
             self.tima = if overflow { tma } else { res };
-            self.int_request = Some(());
+            
+            self.intf.borrow_mut().insert(IFlags::timer);
         } else {
             self.tma = self.tma_write.take().unwrap_or(self.tma);
         }

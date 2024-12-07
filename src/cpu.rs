@@ -3,7 +3,11 @@ use std::ops::{Not, Shl, Shr, BitAnd, BitOr, BitXor};
 use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
-use crate::{bus::{Bus, IFlags, SharedBus}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, ppu::Ppu};
+use crate::{
+	bus::{Bus, IFlags, SharedBus},
+	instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, 
+	ppu::Ppu
+};
 
 bitflags! {
 	#[derive(Default, Debug)]
@@ -194,9 +198,11 @@ impl Cpu {
 	}
 
 	fn handle_interrupts(&mut self) {
-		let mut bus = self.bus.borrow_mut();
+		let bus = self.bus.borrow();
+		let mut intf = bus.intf.borrow_mut();
+		
 		let flags = bus.inte.iter()
-		.zip(bus.intf.iter());
+		.zip(intf.iter());
 
 		for (ief, iff) in flags {
 			println!("Looking for interrupts IE {:?} IF {:?}", ief, iff);
@@ -211,7 +217,8 @@ impl Cpu {
 				};
 				println!("HANDLING INTERRUPT {:?}", iff);
 
-				bus.intf.remove(iff);
+				intf.remove(iff);
+				drop(intf);
 				drop(bus);
 
 				self.ime = false;
@@ -900,7 +907,7 @@ impl Cpu {
 			0xc7 | 0xcf | 0xd7 | 0xdf | 0xe7 | 0xef | 0xf7 | 0xff => self.rst(ops),
 			0xf3 => self.di(),
 			0xfb => self.ei(),
-			_ => todo!("{:02X}: {} not reachable", instr.opcode, instr.name)
+			_ => eprintln!("{:02X}: {} not reachable", instr.opcode, instr.name)
     }
   }
 

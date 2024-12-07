@@ -15,12 +15,13 @@ bitflags! {
 }
 
 pub type SharedBus = Rc<RefCell<Bus>>;
+pub type InterruptFlags = Rc<RefCell<IFlags>>;
 pub struct Bus {
 	pub mem: [u8; 0x10000],
   pub ppu_regs: ppu::Registers,
   pub timer: Timer,
   pub inte: IFlags,
-  pub intf: IFlags,
+  pub intf: InterruptFlags,
 }
 
 enum BusTarget {
@@ -49,12 +50,14 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
 
 impl Bus {
   pub fn new() -> SharedBus {
+    let intf = Rc::new(RefCell::new(IFlags::empty()));
+
     let bus = Self { 
       mem: [0; 0x10000],
       ppu_regs: ppu::Registers::default(),
-      timer: Timer::default(),
+      timer: Timer::new(intf.clone()),
       inte: IFlags::empty(), 
-      intf: IFlags::empty(), 
+      intf, 
     };
 
     Rc::new(RefCell::new(bus))
@@ -64,7 +67,7 @@ impl Bus {
     match addr {
       0xFF04..=0xFF07 => self.timer.read_reg(addr),
       0xFF40..=0xFF4B => self.ppu_regs.read(addr),
-      0xFF0F => self.intf.bits(),
+      0xFF0F => self.intf.borrow().bits(),
       0xFFFF => self.inte.bits(),
       _ => self.mem[addr as usize],
     }
@@ -75,7 +78,7 @@ impl Bus {
       0xFF04..=0xFF07 => self.timer.write_reg(addr, val),
       0xFF40..=0xFF4B => self.ppu_regs.write(addr, val),
       0xFF0F => {
-        self.intf = IFlags::from_bits_truncate(val & 0b1_1111);
+        *self.intf.borrow_mut() = IFlags::from_bits_truncate(val & 0b1_1111);
         println!("Wrote to IF {:?}", self.intf);
       }
       0xFFFF => {
