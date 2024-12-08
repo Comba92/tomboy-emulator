@@ -38,6 +38,10 @@ pub struct Cpu {
 	pub pc: u16,
 	pub ime: bool,
 	ime_to_set: bool,
+
+	dma: Dma,
+	halted: bool,
+
 	mcycles: usize,
 
 	pub bus: SharedBus,
@@ -49,6 +53,36 @@ impl core::fmt::Debug for Cpu {
 				f.debug_struct("Cpu").field("a", &self.a).field("f", &self.f).field("bc", &self.bc).field("de", &self.de).field("hl", &self.hl).field("sp", &self.sp).field("pc", &self.pc).field("ime", &self.ime).field("ime_to_set", &self.ime_to_set).field("cycles", &self.mcycles)
 					.finish()
 		}
+}
+
+#[derive(Default)]
+struct Dma {
+	pub transfering: bool,
+	pub start: u16,
+	pub offset: u16,
+}
+impl Dma {
+	pub fn init(&mut self, val: u8) {
+		self.start = (val as u16) << 8;
+		self.offset = 0;
+		self.transfering = true;
+	}
+
+	pub fn current(&self) -> u16 {
+		self.start  | self.offset
+	}
+
+	fn is_done(&self) -> bool {
+		self.offset >= u8::MAX as u16
+	}
+
+	pub fn tick(&mut self) {
+		self.offset += 1;
+
+		if self.is_done() {
+			self.transfering = false;
+		}
+	}
 }
 
 impl Cpu {
@@ -65,8 +99,10 @@ impl Cpu {
 			pc: 0x0100,
 			ime: false,
 			ime_to_set: false,
+			halted: false,
 			mcycles: 0,
 			ppu: Ppu::new(bus.clone()),
+			dma: Dma::default(),
 			bus,
 		}
 	}
@@ -139,9 +175,15 @@ impl Cpu {
 	fn read16(&mut self, addr: u16) -> u16 {
 		u16::from_le_bytes([self.read(addr), self.read(addr.wrapping_add(1))])
 	}
+
 	pub fn write(&mut self, addr: u16, val: u8) {
-		// println!("Wrote {val:02X} to {addr:04X}");
-		self.bus.borrow_mut().write(addr, val);
+		if addr == 0xFF46 {
+			self.dma.init(val);
+		} else {
+			self.bus.borrow_mut().write(addr, val);
+		}
+
+		self.tick();
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -174,10 +216,28 @@ impl Cpu {
 		for _ in 0..4 { self.ppu.tick(); }
 
 		let mut bus = self.bus.borrow_mut();
-		bus.timer.tick();
+		for _ in 0..4 { bus.timer.tick(); }
 	}
 
 	pub fn step(&mut self) {
+		if self.halted {
+			let bus = self.bus.borrow();
+			let inte = bus.inte;
+			let intf = bus.intf.get();
+			drop(bus);
+
+			if !(inte & intf).is_empty() { self.halted = false; }
+			else { self.tick(); }
+
+			return;
+		}
+
+		if self.dma.transfering {
+			let val = self.peek(self.dma.current());
+			self.write(0xFE00 + self.dma.offset, val);
+			self.dma.tick();
+		}
+
 		let opcode = self.pc_fetch();
 		
 		if opcode == 0xCB {
@@ -199,41 +259,36 @@ impl Cpu {
 
 	fn handle_interrupts(&mut self) {
 		let bus = self.bus.borrow();
-		let mut intf = bus.intf.borrow_mut();
-		
-		let flags = bus.inte.iter()
-		.zip(intf.iter());
+		let mut intf = bus.intf.get();
 
-		for (ief, iff) in flags {
-			println!("Looking for interrupts IE {:?} IF {:?}", ief, iff);
-			if !iff.is_empty() && !ief.is_empty() {
-				let addr = match iff {
-					IFlags::vblank => 0x40,
-					IFlags::lcd    => 0x48,
-					IFlags::timer  => 0x50,
-					IFlags::serial => 0x58, 
-					IFlags::joypad => 0x60,
-					_ => unreachable!(),
-				};
-				println!("HANDLING INTERRUPT {:?}", iff);
+		let pending_ints = bus.inte & intf;
 
-				intf.remove(iff);
-				drop(intf);
-				drop(bus);
+		for int in pending_ints {
+			let addr = match int {
+				IFlags::vblank => 0x40,
+				IFlags::lcd    => 0x48,
+				IFlags::timer  => 0x50,
+				IFlags::serial => 0x58, 
+				IFlags::joypad => 0x60,
+				_ => unreachable!(),
+			};
 
-				self.ime = false;
+			intf.remove(int);
+			bus.intf.set(intf);
+			drop(bus);
 
-				// 2 wait states are executed
-				self.tick();
-				self.tick();
+			self.ime = false;
 
-				self.stack_push(self.pc);
-				self.pc = addr;
-				self.tick();
-				
-				// we don't want to handle any more interrupt
-				break;
-			}
+			// 2 wait states are executed
+			self.tick();
+			self.tick();
+
+			self.stack_push(self.pc);
+			self.pc = addr;
+			self.tick();
+			
+			// we don't want to handle any more interrupt
+			break;
 		}
 	}
 
@@ -852,7 +907,10 @@ impl Cpu {
 	fn ei(&mut self) { self.ime_to_set = true; }
 
 	fn stop(&mut self, ops: &[InstrTarget]) {  } // TODO
-	fn halt(&mut self, ops: &[InstrTarget]) {  } // TODO
+	fn halt(&mut self) {
+		// TODO: halt bug
+		self.halted = true;
+	}
 }
 
 
@@ -886,7 +944,7 @@ impl Cpu {
 			0x2f => self.cpl(),
 			0x37 => self.scf(),
 			0x3f => self.ccf(),
-			0x76 => self.halt(ops),
+			0x76 => self.halt(),
 			0x88 ..= 0x8f | 0xce => self.adc(ops),
 			0x90 ..= 0x97 | 0xd6 => self.sub(ops),
 			0x98 ..= 0x9f | 0xde => self.sbc(ops),

@@ -1,10 +1,10 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::{Cell, RefCell}, rc::Rc};
 
 use crate::{ppu, timer::Timer};
 use bitflags::bitflags;
 
 bitflags! {
-  #[derive(PartialEq, Debug)]
+  #[derive(PartialEq, Clone, Copy, Debug)]
   pub struct IFlags: u8 {
     const joypad = 0b0001_0000;
     const serial = 0b0000_1000;
@@ -15,7 +15,7 @@ bitflags! {
 }
 
 pub type SharedBus = Rc<RefCell<Bus>>;
-pub type InterruptFlags = Rc<RefCell<IFlags>>;
+pub type InterruptFlags = Rc<Cell<IFlags>>;
 pub struct Bus {
 	pub mem: [u8; 0x10000],
   pub ppu_regs: ppu::Registers,
@@ -48,16 +48,22 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
   }
 }
 
+pub fn add_interrupt(intf: &Cell<IFlags>, int: IFlags) {
+  let mut flags = intf.get();
+  flags.insert(int);
+  intf.set(flags);
+}
+
 impl Bus {
   pub fn new() -> SharedBus {
-    let intf = Rc::new(RefCell::new(IFlags::empty()));
+    let intf = Rc::new(Cell::new(IFlags::empty()));
 
     let bus = Self { 
       mem: [0; 0x10000],
       ppu_regs: ppu::Registers::default(),
       timer: Timer::new(intf.clone()),
       inte: IFlags::empty(), 
-      intf, 
+      intf,
     };
 
     Rc::new(RefCell::new(bus))
@@ -67,7 +73,7 @@ impl Bus {
     match addr {
       0xFF04..=0xFF07 => self.timer.read_reg(addr),
       0xFF40..=0xFF4B => self.ppu_regs.read(addr),
-      0xFF0F => self.intf.borrow().bits(),
+      0xFF0F => self.intf.get().bits(),
       0xFFFF => self.inte.bits(),
       _ => self.mem[addr as usize],
     }
@@ -77,14 +83,8 @@ impl Bus {
     match addr {
       0xFF04..=0xFF07 => self.timer.write_reg(addr, val),
       0xFF40..=0xFF4B => self.ppu_regs.write(addr, val),
-      0xFF0F => {
-        *self.intf.borrow_mut() = IFlags::from_bits_truncate(val & 0b1_1111);
-        println!("Wrote to IF {:?}", self.intf);
-      }
-      0xFFFF => {
-        self.inte = IFlags::from_bits_truncate(val & 0b1_1111);
-        println!("Wrote to IE {:?}", self.inte);
-      }
+      0xFF0F => self.intf.set(IFlags::from_bits_truncate(val & 0b1_1111)),
+      0xFFFF => self.inte = IFlags::from_bits_truncate(val & 0b1_1111),
       _ => self.mem[addr as usize] = val,
     }
   }

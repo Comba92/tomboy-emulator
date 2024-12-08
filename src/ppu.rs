@@ -1,5 +1,5 @@
 use bitflags::bitflags;
-use crate::{bus::{IFlags, SharedBus}, frame::FrameBuffer};
+use crate::{bus::{self, IFlags, SharedBus}, frame::FrameBuffer};
 
 bitflags! {
   #[derive(Default, Clone, Copy)]
@@ -47,9 +47,10 @@ const SCY: u16 = 0xFF42;
 const SCX: u16 = 0xFF43;
 const LY: u16 = 0xFF44;
 const LYC: u16 = 0xFF45;
+const DMA: u16 = 0xFF46;
 const WY: u16 = 0xFF4A;
 const WX: u16 = 0xFF4B;
-const PALETTE: u16 = 0xFF47;
+const BGP: u16 = 0xFF47;
 
 impl Registers {
   pub fn read(&self, addr: u16) -> u8 {
@@ -64,7 +65,7 @@ impl Registers {
       0xFF4B => self.wx,
       0xFF47 => self.bg_palette,
       _ => {
-        eprintln!("Ppu register read {addr:04X} not implemented");
+        // eprintln!("Ppu register read {addr:04X} not implemented");
         0
       }
     }
@@ -129,13 +130,15 @@ impl Ppu {
   }
 
   pub fn tick(&mut self) {
-    self.tcycles += 1;
-
-    if self.scanlines == 0 && self.tcycles == 81
-    && self.ctrl().contains(Ctrl::ppu_on) {
-      self.render_bg();
-      self.render_wind();
+    if self.scanlines == 0 {
+      if self.tcycles == 80 && self.ctrl().contains(Ctrl::ppu_on) {
+        self.render_bg();
+        self.render_wind();
+        self.render_spr();
+      }
     }
+
+    self.tcycles += 1;
 
     if self.tcycles > 456 {
       self.tcycles = 0;
@@ -143,12 +146,30 @@ impl Ppu {
       self.set_ly(self.read(LY) + 1);
 
       if self.scanlines == 144 {
-        self.bus.borrow().intf.borrow_mut().insert(IFlags::vblank);
+        bus::add_interrupt(&self.bus.borrow().intf, IFlags::vblank);
         self.vblank = Some(());
       }
       if self.scanlines > 154 {
         self.scanlines = 0;
         self.set_ly(0);
+      }
+    }
+  }
+
+  pub fn render_tile(&mut self, x: usize, y: usize, tile_addr: usize) {
+    let tile = &self.bus.borrow().mem[tile_addr..tile_addr+16];
+
+    for row in 0..8 {
+      let plane0 = tile[row*2];
+      let plane1 = tile[row*2 + 1];
+
+      for bit in 0..8 {
+          let bit0 = (plane0 >> bit) & 1;
+          let bit1 = ((plane1 >> bit) & 1) << 1;
+          let color_idx = bit1 | bit0;
+          let color = self.palette_color(color_idx);
+
+          self.lcd.set_pixel(x + 7-bit, y + row, color);
       }
     }
   }
@@ -161,40 +182,37 @@ impl Ppu {
     for y in 0..144/8 {
       for x in 0..160/8 {
         let tilemap_addr = tilemap
-          + ((scy + y) % 32) * 32 
+          + ((scy + y) % 32) * 32
           + ((scx + x) % 32);
 
         let tile_id = self.read(tilemap_addr);
         let tileset_addr = self.tile_addr(tile_id) as usize;
-        let tile = &self.bus.borrow().mem[tileset_addr..tileset_addr+16];
 
-        self.lcd.set_tile(8*x as usize, 8*y as usize, tile);
+        self.render_tile(8*x as usize, 8*y as usize, tileset_addr);
       }
     }
   }
 
   fn render_wind(&mut self) {
-    // let wx = self.read(WX).wrapping_sub(7) as u16/8;
-    // let wy = self.read(WY) as u16/8;
-    // let tilemap = self.wind_tilemap();
 
-    // for y in wy..144/8 {
-    //   for x in wx..160/8 {
-    //     if wx + x > 166 || wy + y > 143 {
-    //       continue;
-    //     }
+  }
 
-    //     let tilemap_addr = tilemap
-    //       + ((wy + y) % 32) * 32 
-    //       + ((wx + x) % 32);
+  fn render_spr(&mut self) {
+    for i in (0xFE00..=0xFE9F).step_by(4) {
+      let y = self.read(i) as usize;
+      let x = self.read(i+1) as usize;
+      let tile_id = self.read(i+2);
+      let attributes = self.read(i+3);
+      
+      if x < 8 || y < 16 || x >= 168 || y >= 160 { continue; }
 
-    //     let tile_id = self.read(tilemap_addr);
-    //     let tileset_addr = self.tile_addr(tile_id) as usize;
-    //     let tile = &self.bus.borrow().mem[tileset_addr..tileset_addr+16];
-
-    //     self.lcd.set_tile(8*x as usize, 8*y as usize, tile);
-    //   }
-    // }
+      // let priority = (attributes >> 7) & 1 == 0;
+      // let y_flip = (attributes >> 6) & 1;
+      // let x_flip = (attributes >> 5) & 1;
+      
+      let tileset_addr = 0x8000 + tile_id as usize;
+      self.render_tile(x+8, y+16, tileset_addr);
+    }
   }
 
   pub fn read(&self, addr: u16) -> u8 {
@@ -243,5 +261,10 @@ impl Ppu {
         (0x9000 + 16*offset as i32) as u16
       }
     }
+  }
+
+  fn palette_color(&self, colord_id: u8)  -> u8 {
+    let bg_palette = self.read(BGP);
+    (bg_palette >> (colord_id*2)) & 0b11
   }
 }

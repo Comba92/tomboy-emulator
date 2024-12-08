@@ -4,7 +4,9 @@
 
 use bitflags::bitflags;
 
-use crate::bus::{IFlags, InterruptFlags};
+use crate::bus::{self, IFlags, InterruptFlags};
+
+const CPU_CLOCK: usize = 4194304;
 
 bitflags! {
     #[derive(Default)]
@@ -15,12 +17,13 @@ bitflags! {
 }
 
 pub struct Timer {
-    div: u8,
+    div: u16,
     tima: u8,
     tma: u8,
-    tma_write: Option<u8>,
+    tma_overflow_delay: u8,
+    last_and: bool,
     tac: Flags,
-    cycles: usize,
+    tcycles: usize,
     intf: InterruptFlags,
 }
 
@@ -30,44 +33,63 @@ impl Timer {
             div: 0,
             tima: 0,
             tma: 0,
-            tma_write: None,
+            tma_overflow_delay: 0,
+            last_and: false,
             tac: Flags::default(),
-            cycles: 0,
+            tcycles: 0,
             intf,
         }
     }
 
     pub fn tick(&mut self) {
-        self.cycles += 1;
+        self.tcycles += 1;
+        self.div = self.div.wrapping_add(1);
 
-        if self.cycles % 256 == 0 {
-            self.div = self.div.wrapping_add(1);
-        }
-
-        if (self.cycles + 0x100) % self.tima_clock() == 0 && self.tac.contains(Flags::enable) {
+        if self.tma_overflow_delay > 0 {
+            self.tma_overflow_delay -= 1;
+            if self.tma_overflow_delay == 0 {
+                self.tima = self.tma;
+                bus::add_interrupt(&self.intf, IFlags::timer);
+            }
+        } else if self.tcycles % self.tima_clock() == 0 
+                  && !self.last_and && self.div_and() {
             let (res, overflow) = self.tima.overflowing_add(1);
-            let tma = self.tma_write.take().unwrap_or(self.tma);
-            self.tima = if overflow { tma } else { res };
-            
-            self.intf.borrow_mut().insert(IFlags::timer);
-        } else {
-            self.tma = self.tma_write.take().unwrap_or(self.tma);
+            self.tima = res;
+            if overflow { self.tma_overflow_delay = 4; }
         }
+
+        self.last_and = self.div_and();
     }
 
-    fn tima_clock(&mut self) -> usize {
+    fn tima_clock(&self) -> usize {
         match self.tac.bits() & 0b11 {
-            0b00 => 256,
-            0b01 => 4,
-            0b10 => 16,
-            0b11 => 64,
+            0b00 => CPU_CLOCK / 1024,
+            0b01 => CPU_CLOCK / 16,
+            0b10 => CPU_CLOCK / 64,
+            0b11 => CPU_CLOCK / 256,
             _ => unreachable!()
         }
     }
 
+    fn div_bit(&self) -> bool {
+        let bit = match self.tac.bits() & 0b11 {
+            0b00 => 9,
+            0b01 => 3,
+            0b10 => 5,
+            0b11 => 7,
+            _ => unreachable!()
+        };
+
+        (self.div >> bit) & 1 != 0
+    }
+
+    fn div_and(&self) -> bool {
+        self.tac.contains(Flags::enable) && self.div_bit()
+    }
+
     pub fn read_reg(&self, addr: u16) -> u8 {
         match addr {
-            0xFF04 => self.div,
+            0xFF04 => (self.div >> 8) as u8,
             0xFF05 => self.tima,
             0xFF06 => self.tma,
             0xFF07 => self.tac.bits(),
@@ -79,7 +101,7 @@ impl Timer {
         match addr {
             0xFF04 => self.div = 0,
             0xFF05 => self.tima = val,
-            0xFF06 => self.tma_write = Some(val),
+            0xFF06 => self.tma = val,
             0xFF07 => self.tac = Flags::from_bits_truncate(val & 0b111),
             _ => {}
         }

@@ -1,11 +1,12 @@
-use std::{error::Error, fs};
+use std::{error::Error, fs, time};
 
 use sdl2::{event::Event, pixels::PixelFormatEnum};
-use tomboy_emulator::{cpu::Cpu, frame::FrameBuffer};
+use tomboy_emulator::cpu::Cpu;
 
 fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
   let video = sdl.video()?;
+  let ms_frame = time::Duration::from_secs_f64(1.0 / 60.0);
 
   const WIN_WIDTH: u32 = 20*8;
   const WIN_HEIGHT: u32 = 18*8;
@@ -18,9 +19,9 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut events = sdl.event_pump()?;
 
   let mut emu = Cpu::new();
-  // let rom = fs::read("./tests/roms/02-interrupts.gb")?;
+  let rom = fs::read("./tests/roms/02-interrupts.gb")?;
   // let rom = fs::read("./roms/Tetris.gb")?;
-  let rom = fs::read("./bootroms/dmg_boot.bin")?;
+  // let rom = fs::read("./bootroms/dmg_boot.bin")?;
 
   //let cart = Cart::new(&rom);
   //println!("{:?}", cart);
@@ -34,9 +35,11 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut texture = texture_creator
     .create_texture_target(PixelFormatEnum::RGBA32, WIN_WIDTH, WIN_HEIGHT)?;
 
-  let mut framebuf = FrameBuffer::new(WIN_WIDTH as usize, WIN_HEIGHT as usize);
+  // let mut framebuf = FrameBuffer::new(WIN_WIDTH as usize, WIN_HEIGHT as usize);
 
   'running: loop {
+    let ms_since_frame_start = time::Instant::now();
+
     while emu.ppu.vblank.take().is_none() {
       emu.step();
     }
@@ -44,6 +47,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     for event in events.poll_iter() {
       match event {
         Event::Quit { .. } => break 'running,
+        Event::DropFile { filename, .. } => {
+          emu = Cpu::new();
+
+          let rom = fs::read(filename)?;
+          let mut bus = emu.bus.borrow_mut();
+          let (left, _) = bus.mem.split_at_mut(rom.len());
+          left.copy_from_slice(&rom);
+          drop(bus);
+        }
         _ => {}
       }
 
@@ -69,6 +81,11 @@ fn main() -> Result<(), Box<dyn Error>> {
       texture.update(None, &emu.ppu.lcd.buffer, emu.ppu.lcd.pitch())?;
       canvas.copy(&texture, None, None)?;
       canvas.present();
+
+      let ms_elapsed = time::Instant::now() - ms_since_frame_start;
+      if ms_frame > ms_elapsed {
+        std::thread::sleep(ms_frame - ms_elapsed);
+      }
     }
   }
 
