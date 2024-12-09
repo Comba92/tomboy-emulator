@@ -237,7 +237,7 @@ impl Ppu {
     let scanline = self.ly();
 
     for i in (0..256).step_by(4) {
-      let mut y = self.read(OAM + i);
+      let mut y = self.read(OAM + i+0);
       let mut x = self.read(OAM + i+1);
 
       if y < 16 || y >= 160 || x < 8 || x >= 168 { continue; }
@@ -267,7 +267,7 @@ impl Ppu {
 
       let tile_id = self.read(tilemap_addr);
       let tileset_addr = self.tile_addr(tile_id) as usize;
-      self.render_tile_row(pixel as usize, scanline as usize, tileset_addr, scanline as usize%8);
+      self.render_tile_row(pixel as usize, scanline as usize, tileset_addr, (scy + scanline) as usize%8);
     }
   }
 

@@ -6,7 +6,6 @@ use bitflags::bitflags;
 
 use crate::bus;
 
-const CPU_CLOCK: usize = 4194304;
 
 bitflags! {
     #[derive(Default)]
@@ -30,7 +29,7 @@ pub struct Timer {
 impl Timer {
     pub fn new(intf: bus::InterruptFlags) -> Self {
         Self {
-            div: 0,
+            div: 0xAC00,
             last_div: 0,
             tima: 0,
             tma: 0,
@@ -43,6 +42,7 @@ impl Timer {
 
     pub fn tick(&mut self) {
         self.mcycles += 1;
+
         self.last_div = self.div;
         self.div = self.div.wrapping_add(1);
 
@@ -50,8 +50,10 @@ impl Timer {
             self.tma_overflow_delay = false;
             self.tima = self.tma;
             bus::send_interrupt(&self.intf, bus::IFlags::timer);
-        } else if self.mcycles % self.tima_clock() == 0 
-               && self.tac_enabled() {
+        }
+        
+        if self.mcycles % self.tima_clock() == 0 
+        && self.tac_enabled() {
             let (res, overflow) = self.tima.overflowing_add(1);
             self.tima = res;
             self.tma_overflow_delay = overflow;
@@ -60,10 +62,10 @@ impl Timer {
 
     fn tima_clock(&self) -> usize {
         match self.tac.bits() & 0b11 {
-            0b00 => CPU_CLOCK / 1024,
-            0b01 => CPU_CLOCK / 16,
-            0b10 => CPU_CLOCK / 64,
-            0b11 => CPU_CLOCK / 256,
+            0b00 => 256,
+            0b01 => 4,
+            0b10 => 16,
+            0b11 => 64,
             _ => unreachable!()
         }
     }

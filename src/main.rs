@@ -59,33 +59,34 @@ fn main() -> Result<(), Box<dyn Error>> {
         _ => {}
       }
 
-      // for i in 0..384 {
-      //   let x = i % (WIN_WIDTH as usize/16);
-      //   let y = i / (WIN_WIDTH as usize/16);
-      //   let tile_start = 0x8000 + i*16;
-      //   let tile = &emu.bus.mem[tile_start..tile_start+16];
-      //   framebuf.set_tile(x*16, y*16, &tile);
-      // }
+    }
+    
+    // for i in 0..384 {
+    //   let x = i % (WIN_WIDTH as usize/16);
+    //   let y = i / (WIN_WIDTH as usize/16);
+    //   let tile_start = 0x8000 + i*16;
+    //   let tile = &emu.bus.mem[tile_start..tile_start+16];
+    //   framebuf.set_tile(x*16, y*16, &tile);
+    // }
 
-      // for i in 0..20*18 {
-      //   let x = i % 20;
-      //   let y = i / 20;
+    // for i in 0..20*18 {
+    //   let x = i % 20;
+    //   let y = i / 20;
 
-      //   let tile_id = emu.read(0x9800 + y*20 + x);
-      //   let tile_addr = emu.ppu.tile_addr(tile_id) as usize;
-      //   let tile = &emu.bus.borrow().mem[tile_addr..tile_addr+16];
-      //   framebuf.set_tile(x as usize*8, y as usize*8, &tile);
-      // }
+    //   let tile_id = emu.read(0x9800 + y*20 + x);
+    //   let tile_addr = emu.ppu.tile_addr(tile_id) as usize;
+    //   let tile = &emu.bus.borrow().mem[tile_addr..tile_addr+16];
+    //   framebuf.set_tile(x as usize*8, y as usize*8, &tile);
+    // }
+    
+    canvas.clear();
+    texture.update(None, &emu.ppu.lcd.buffer, emu.ppu.lcd.pitch())?;
+    canvas.copy(&texture, None, None)?;
+    canvas.present();
 
-      canvas.clear();
-      texture.update(None, &emu.ppu.lcd.buffer, emu.ppu.lcd.pitch())?;
-      canvas.copy(&texture, None, None)?;
-      canvas.present();
-
-      let ms_elapsed = time::Instant::now() - ms_since_frame_start;
-      if ms_frame > ms_elapsed {
-        std::thread::sleep(ms_frame - ms_elapsed);
-      }
+    let ms_elapsed = time::Instant::now() - ms_since_frame_start;
+    if ms_frame > ms_elapsed {
+      std::thread::sleep(ms_frame - ms_elapsed);
     }
   }
 

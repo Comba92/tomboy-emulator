@@ -57,6 +57,7 @@ impl core::fmt::Debug for Cpu {
 
 #[derive(Default)]
 struct Dma {
+	pub transfering: bool,
 	pub start: u16,
 	pub offset: u16,
 	pub start_delay: bool,
@@ -72,12 +73,13 @@ impl Dma {
 		self.start + self.offset
 	}
 
-	pub fn is_transfering(&self) -> bool {
-		self.offset <= 0x9F
+	fn is_done(&self) -> bool {
+		self.offset >= 0x9F
 	}
 
 	pub fn tick(&mut self) {
 		self.offset += 1;
+		self.transfering = !self.is_done();
 	}
 }
 
@@ -212,7 +214,7 @@ impl Cpu {
 		for _ in 0..4 { self.ppu.tick(); }
 
 		let mut bus = self.bus.borrow_mut();
-		for _ in 0..4 { bus.timer.tick(); }
+		bus.timer.tick();
 	}
 
 	pub fn step(&mut self) {
@@ -241,12 +243,13 @@ impl Cpu {
 
 		if self.dma.start_delay {
 			self.dma.start_delay = false;
-		} else if self.dma.is_transfering() {
+			self.dma.transfering = true;
+		} else if self.dma.transfering {
 			let val = self.peek(self.dma.current());
 			self.write(0xFE00 + self.dma.offset, val);
+			// println!("DMA writing {:04X} to {:04X}", self.dma.current(), 0xFE00 + self.dma.offset);
 			self.dma.tick();
 		}
-	
 
 		if self.ime_to_set {
 			self.ime = true;
