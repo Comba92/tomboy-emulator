@@ -4,7 +4,7 @@
 
 use bitflags::bitflags;
 
-use crate::bus::{self, IFlags, InterruptFlags};
+use crate::bus;
 
 const CPU_CLOCK: usize = 4194304;
 
@@ -18,47 +18,44 @@ bitflags! {
 
 pub struct Timer {
     div: u16,
+    last_div: u16,
     tima: u8,
     tma: u8,
-    tma_overflow_delay: u8,
-    last_and: bool,
+    tma_overflow_delay: bool,
     tac: Flags,
-    tcycles: usize,
-    intf: InterruptFlags,
+    mcycles: usize,
+    intf: bus::InterruptFlags,
 }
 
 impl Timer {
-    pub fn new(intf: InterruptFlags) -> Self {
+    pub fn new(intf: bus::InterruptFlags) -> Self {
         Self {
             div: 0,
+            last_div: 0,
             tima: 0,
             tma: 0,
-            tma_overflow_delay: 0,
-            last_and: false,
+            tma_overflow_delay: false,
             tac: Flags::default(),
-            tcycles: 0,
+            mcycles: 0,
             intf,
         }
     }
 
     pub fn tick(&mut self) {
-        self.tcycles += 1;
+        self.mcycles += 1;
+        self.last_div = self.div;
         self.div = self.div.wrapping_add(1);
 
-        if self.tma_overflow_delay > 0 {
-            self.tma_overflow_delay -= 1;
-            if self.tma_overflow_delay == 0 {
-                self.tima = self.tma;
-                bus::add_interrupt(&self.intf, IFlags::timer);
-            }
-        } else if self.tcycles % self.tima_clock() == 0 
-                  && !self.last_and && self.div_and() {
+        if self.tma_overflow_delay {
+            self.tma_overflow_delay = false;
+            self.tima = self.tma;
+            bus::send_interrupt(&self.intf, bus::IFlags::timer);
+        } else if self.mcycles % self.tima_clock() == 0 
+               && self.tac_enabled() {
             let (res, overflow) = self.tima.overflowing_add(1);
             self.tima = res;
-            if overflow { self.tma_overflow_delay = 4; }
+            self.tma_overflow_delay = overflow;
         }
-
-        self.last_and = self.div_and();
     }
 
     fn tima_clock(&self) -> usize {
@@ -80,10 +77,10 @@ impl Timer {
             _ => unreachable!()
         };
 
-        (self.div >> bit) & 1 != 0
+        (self.last_div >> bit) & 1 != 0 && (self.div >> bit) & 1 == 0
     }
 
-    fn div_and(&self) -> bool {
+    fn tac_enabled(&self) -> bool {
         self.tac.contains(Flags::enable) && self.div_bit()
     }
 

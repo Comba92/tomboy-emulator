@@ -34,4 +34,17 @@ impl FrameBuffer {
     self.buffer[idx + 2] = color.2;
     self.buffer[idx + 3] = 255;
   }
+
+  pub fn set_tile(&mut self, x: usize, y: usize, tile: &[u8]) {
+    for row in 0..8 {
+      let plane0 = tile[row*2];
+      let plane1 = tile[row*2 + 1];
+      for bit in 0..8 {
+          let bit0 = (plane0 >> bit) & 1;
+          let bit1 = ((plane1 >> bit) & 1) << 1;
+          let color_idx = bit1 | bit0;
+          self.set_pixel(x + 7-bit, y + row, color_idx);
+      }
+    }
+  }
 }

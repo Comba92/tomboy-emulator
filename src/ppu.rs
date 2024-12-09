@@ -1,5 +1,5 @@
 use bitflags::bitflags;
-use crate::{bus::{self, IFlags, SharedBus}, frame::FrameBuffer};
+use crate::{bus::{self, SharedBus}, frame::FrameBuffer};
 
 bitflags! {
   #[derive(Default, Clone, Copy)]
@@ -51,6 +51,11 @@ const DMA: u16 = 0xFF46;
 const WY: u16 = 0xFF4A;
 const WX: u16 = 0xFF4B;
 const BGP: u16 = 0xFF47;
+const OAM: u16 = 0xFE00;
+const VRAM0: u16 = 0x8000;
+const VRAM1: u16 = 0x8800;
+const VRAM2: u16 = 0x9000;
+
 
 impl Registers {
   pub fn read(&self, addr: u16) -> u8 {
@@ -91,9 +96,9 @@ impl Registers {
 
 #[derive(Default)]
 enum PpuMode {
-  #[default]
   Hblank, // Mode0
   Vblank, // Mode1
+  #[default]
   OamScan, // Mode2
   DrawingPixels, // Mode3
 }
@@ -108,7 +113,6 @@ pub struct Ppu {
   pub vblank: Option<()>,
 
   tcycles: usize,
-  scanlines: usize,
   bus: SharedBus,
 }
 
@@ -124,37 +128,75 @@ impl Ppu {
       vblank: None,
 
       tcycles: Default::default(), 
-      scanlines: Default::default(), 
       bus,
     }
   }
 
+  fn send_vblank_int(&mut self) {
+    bus::send_interrupt(&self.bus.borrow().intf, bus::IFlags::vblank);
+    self.vblank = Some(());
+  }
+
+  fn send_lcd_int(&mut self, flag: Stat) {
+    if self.stat().contains(flag) {
+      bus::send_interrupt(&self.bus.borrow().intf, bus::IFlags::lcd);
+    } 
+  }
+  
   pub fn tick(&mut self) {
-    if self.scanlines == 0 {
-      if self.tcycles == 80 && self.ctrl().contains(Ctrl::ppu_on) {
-        self.render_bg();
-        self.render_wind();
-        self.render_spr();
-      }
-    }
-
+    use PpuMode::*;
+    
     self.tcycles += 1;
-
     if self.tcycles > 456 {
       self.tcycles = 0;
-      self.scanlines += 1;
-      self.set_ly(self.read(LY) + 1);
-
-      if self.scanlines == 144 {
-        bus::add_interrupt(&self.bus.borrow().intf, IFlags::vblank);
-        self.vblank = Some(());
-      }
-      if self.scanlines > 154 {
-        self.scanlines = 0;
-        self.set_ly(0);
-      }
+      self.ly_inc();
     }
+
+    let mut stat = self.stat();
+    stat.set(Stat::lyc_eq_ly, self.ly() == self.read(LYC));
+    self.set_stat(stat);
+
+    if stat.contains(Stat::lyc_eq_ly) {
+      self.send_lcd_int(Stat::lyc_int);
+    }
+
+    match self.mode {
+      OamScan => {
+        if self.tcycles >= 80 {
+          self.scan_sprites();
+          self.mode = DrawingPixels;
+        }
+      }
+      DrawingPixels => {
+        if self.tcycles >= 80 + 172 {
+          self.render_scanline();
+          self.scan_sprites();
+
+          self.mode = Hblank;
+          self.send_lcd_int(Stat::mode0_int);
+        }
+      }
+      Hblank => {
+        if self.tcycles >= 456 {
+          if self.ly() > 143 {
+            self.mode = Vblank;
+            self.send_vblank_int();
+            self.send_lcd_int(Stat::mode1_int);
+          } else {
+            self.mode = OamScan
+          };
+        }
+      }
+      Vblank => {
+        if self.ly() >= 154 {
+          self.ly_reset();
+          self.mode = OamScan;
+          self.send_lcd_int(Stat::mode2_int);
+        }
+      }
+    };
   }
+
 
   pub fn render_tile(&mut self, x: usize, y: usize, tile_addr: usize) {
     let tile = &self.bus.borrow().mem[tile_addr..tile_addr+16];
@@ -171,6 +213,61 @@ impl Ppu {
 
           self.lcd.set_pixel(x + 7-bit, y + row, color);
       }
+    }
+  }
+
+  pub fn render_tile_row(&mut self, x: usize, y: usize, tileset_addr: usize, row: usize) {
+    let tile_addr = tileset_addr + row*2;
+    let tile_row = &self.bus.borrow().mem[tile_addr..tile_addr+2];
+
+    let plane0 = tile_row[0];
+    let plane1 = tile_row[1];
+
+    for bit in 0..8 {
+        let bit0 = (plane0 >> bit) & 1;
+        let bit1 = ((plane1 >> bit) & 1) << 1;
+        let color_idx = bit1 | bit0;
+        let color = self.palette_color(color_idx);
+
+        self.lcd.set_pixel(x + 7-bit, y, color);
+    }
+  }
+
+  fn scan_sprites(&mut self) {
+    let scanline = self.ly();
+
+    for i in (0..256).step_by(4) {
+      let mut y = self.read(OAM + i);
+      let mut x = self.read(OAM + i+1);
+
+      if y < 16 || y >= 160 || x < 8 || x >= 168 { continue; }
+      y -= 16;
+      x -= 8;
+
+      let row = scanline.abs_diff(y) as usize;
+      if row >= 8 { continue; }
+
+      let tile_id = self.read(OAM + i+2) as u16;
+      let tileset_addr = self.read(VRAM0 + tile_id*16) as usize;
+      self.render_tile_row(x as usize, y as usize + row, tileset_addr, row as usize);
+    }
+  }
+
+  fn render_scanline(&mut self) {
+    let scanline = self.ly() as u16;
+
+    let scx = self.read(SCX) as u16;
+    let scy = self.read(SCY) as u16;
+    let tilemap = self.bg_tilemap();
+
+    for pixel in (0..256).step_by(8) {
+      let tilemap_addr = tilemap 
+        + ((scy + scanline) % 256)/8 * 32
+        + ((scx + pixel) % 256)/8;
+
+      let tile_id = self.read(tilemap_addr);
+      let tileset_addr = self.tile_addr(tile_id) as usize;
+      self.render_tile_row(pixel as usize, scanline as usize, tileset_addr, scanline as usize%8);
     }
   }
 
@@ -193,10 +290,6 @@ impl Ppu {
     }
   }
 
-  fn render_wind(&mut self) {
-
-  }
-
   fn render_spr(&mut self) {
     for i in (0xFE00..=0xFE9F).step_by(4) {
       let y = self.read(i) as usize;
@@ -210,7 +303,7 @@ impl Ppu {
       // let y_flip = (attributes >> 6) & 1;
       // let x_flip = (attributes >> 5) & 1;
       
-      let tileset_addr = 0x8000 + tile_id as usize;
+      let tileset_addr = VRAM0 as usize + 16*tile_id as usize;
       self.render_tile(x+8, y+16, tileset_addr);
     }
   }
@@ -221,10 +314,6 @@ impl Ppu {
 
   pub fn write(&mut self, addr: u16, val: u8) {
     self.bus.borrow_mut().write(addr, val);
-  }
-
-  fn ctrl(&self) -> Ctrl {
-    self.bus.borrow().ppu_regs.ctrl
   }
 
   fn bg_tilemap(&self) -> u16 {
@@ -241,30 +330,42 @@ impl Ppu {
     }
   }
 
+  fn ctrl(&self) -> Ctrl {
+    self.bus.borrow().ppu_regs.ctrl
+  }
+
   fn stat(&self) -> Stat {
     self.bus.borrow().ppu_regs.stat
   }
 
-  fn set_stat(&mut self, val: Stat) {
-    self.bus.borrow_mut().ppu_regs.stat = val;
+  fn set_stat(&mut self, stat: Stat) {
+    self.bus.borrow_mut().ppu_regs.stat = stat;
   }
 
-  fn set_ly(&mut self, val: u8) {
-    self.bus.borrow_mut().ppu_regs.ly = val;
+  fn ly(&self) -> u8 {
+    self.bus.borrow().ppu_regs.ly
+  }
+
+  fn ly_inc(&mut self) {
+    self.bus.borrow_mut().ppu_regs.ly += 1;
+  }
+
+  fn ly_reset(&mut self) {
+    self.bus.borrow_mut().ppu_regs.ly = 0;
   }
 
   pub fn tile_addr(&self, tile_id: u8) -> u16 {
     match self.ctrl().contains(Ctrl::tiles_addr) {
-      true  => 0x8000 + 16*tile_id as u16,
+      true  => VRAM0 + 16*tile_id as u16,
       false => {
         let offset = tile_id as i8;
-        (0x9000 + 16*offset as i32) as u16
+        (VRAM2 as i32 + 16*offset as i32) as u16
       }
     }
   }
 
   fn palette_color(&self, colord_id: u8)  -> u8 {
-    let bg_palette = self.read(BGP);
+    let bg_palette = self.bus.borrow().ppu_regs.bg_palette;
     (bg_palette >> (colord_id*2)) & 0b11
   }
 }

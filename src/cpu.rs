@@ -57,31 +57,27 @@ impl core::fmt::Debug for Cpu {
 
 #[derive(Default)]
 struct Dma {
-	pub transfering: bool,
 	pub start: u16,
 	pub offset: u16,
+	pub start_delay: bool,
 }
 impl Dma {
 	pub fn init(&mut self, val: u8) {
 		self.start = (val as u16) << 8;
 		self.offset = 0;
-		self.transfering = true;
+		self.start_delay = true;
 	}
 
 	pub fn current(&self) -> u16 {
-		self.start  | self.offset
+		self.start + self.offset
 	}
 
-	fn is_done(&self) -> bool {
-		self.offset >= u8::MAX as u16
+	pub fn is_transfering(&self) -> bool {
+		self.offset <= 0x9F
 	}
 
 	pub fn tick(&mut self) {
 		self.offset += 1;
-
-		if self.is_done() {
-			self.transfering = false;
-		}
 	}
 }
 
@@ -223,19 +219,13 @@ impl Cpu {
 		if self.halted {
 			let bus = self.bus.borrow();
 			let inte = bus.inte;
-			let intf = bus.intf.get();
+			let intf = bus.intf();
 			drop(bus);
 
 			if !(inte & intf).is_empty() { self.halted = false; }
 			else { self.tick(); }
 
 			return;
-		}
-
-		if self.dma.transfering {
-			let val = self.peek(self.dma.current());
-			self.write(0xFE00 + self.dma.offset, val);
-			self.dma.tick();
 		}
 
 		let opcode = self.pc_fetch();
@@ -249,6 +239,15 @@ impl Cpu {
 			self.execute_no_prefix(instr)
 		}
 
+		if self.dma.start_delay {
+			self.dma.start_delay = false;
+		} else if self.dma.is_transfering() {
+			let val = self.peek(self.dma.current());
+			self.write(0xFE00 + self.dma.offset, val);
+			self.dma.tick();
+		}
+	
+
 		if self.ime_to_set {
 			self.ime = true;
 			self.ime_to_set = false;
@@ -259,7 +258,7 @@ impl Cpu {
 
 	fn handle_interrupts(&mut self) {
 		let bus = self.bus.borrow();
-		let mut intf = bus.intf.get();
+		let mut intf = bus.intf();
 
 		let pending_ints = bus.inte & intf;
 
@@ -274,7 +273,7 @@ impl Cpu {
 			};
 
 			intf.remove(int);
-			bus.intf.set(intf);
+			bus.set_intf(intf);
 			drop(bus);
 
 			self.ime = false;

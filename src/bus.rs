@@ -48,7 +48,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
   }
 }
 
-pub fn add_interrupt(intf: &Cell<IFlags>, int: IFlags) {
+pub fn send_interrupt(intf: &Cell<IFlags>, int: IFlags) {
   let mut flags = intf.get();
   flags.insert(int);
   intf.set(flags);
@@ -87,5 +87,13 @@ impl Bus {
       0xFFFF => self.inte = IFlags::from_bits_truncate(val & 0b1_1111),
       _ => self.mem[addr as usize] = val,
     }
+  }
+
+  pub fn intf(&self) -> IFlags {
+    self.intf.get()
+  }
+
+  pub fn set_intf(&self, val: IFlags) {
+    self.intf.set(val);
   }
 }
