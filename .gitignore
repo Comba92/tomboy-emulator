@@ -4,3 +4,4 @@
 /tests/logs
 *.lib
 /bootroms
+/tests/GameboyCPUTests

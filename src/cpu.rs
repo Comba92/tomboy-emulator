@@ -42,7 +42,7 @@ pub struct Cpu {
 	dma: Dma,
 	halted: bool,
 
-	mcycles: usize,
+	pub mcycles: usize,
 
 	pub bus: SharedBus,
 	pub ppu: Ppu,

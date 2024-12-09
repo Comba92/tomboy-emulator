@@ -53,7 +53,8 @@ impl Timer {
         }
         
         if self.mcycles % self.tima_clock() == 0 
-        && self.tac_enabled() {
+        //&& self.tac_enabled() {
+        && self.tac.contains(Flags::enable) {
             let (res, overflow) = self.tima.overflowing_add(1);
             self.tima = res;
             self.tma_overflow_delay = overflow;
@@ -79,7 +80,7 @@ impl Timer {
             _ => unreachable!()
         };
 
-        (self.last_div >> bit) & 1 != 0 && (self.div >> bit) & 1 == 0
+        (self.last_div >> bit) & 1 == 1 && (self.div >> bit) & 1 == 0
     }
 
     fn tac_enabled(&self) -> bool {
