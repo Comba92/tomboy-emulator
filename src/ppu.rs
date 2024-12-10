@@ -38,7 +38,10 @@ pub struct Registers {
   scx: u8,
   wy: u8,
   wx: u8,
-  bg_palette: u8,
+
+  bgp: u8,
+  obp0: u8,
+  obp1: u8,
 }
 
 const CTRL: u16 = 0xFF40;
@@ -51,6 +54,8 @@ const DMA: u16 = 0xFF46;
 const WY: u16 = 0xFF4A;
 const WX: u16 = 0xFF4B;
 const BGP: u16 = 0xFF47;
+const OBP0: u16 = 0xFF48;
+const OBP1: u16 = 0xFF49;
 const OAM: u16 = 0xFE00;
 const VRAM0: u16 = 0x8000;
 const VRAM1: u16 = 0x8800;
@@ -68,7 +73,9 @@ impl Registers {
       0xFF45 => self.lyc,
       0xFF4A => self.wy,
       0xFF4B => self.wx,
-      0xFF47 => self.bg_palette,
+      0xFF47 => self.bgp,
+      0xFF48 => self.obp0,
+      0xFF49 => self.obp1,
       _ => {
         // eprintln!("Ppu register read {addr:04X} not implemented");
         0
@@ -86,7 +93,9 @@ impl Registers {
       0xFF45 => self.lyc = val,
       0xFF4A => self.wy = val,
       0xFF4B => self.wx = val,
-      0xFF47 => self.bg_palette = val,
+      0xFF47 => self.bgp = val,
+      0xFF48 => self.obp0 = val,
+      0xFF49 => self.obp1 = val,
       // _ => eprintln!("Ppu register write {addr:04X} not implemented"),
       _ => {}
     }
@@ -105,9 +114,7 @@ enum PpuMode {
 
 pub struct Ppu {
   pub lcd: FrameBuffer,
-  bg_scanline: [u8; 160],
-  wind_scanline: [u8; 160],
-  spr_scanline: [u8; 160],
+  obj_scanline: [(u8, bool); 168],
 
   mode: PpuMode,
   pub vblank: Option<()>,
@@ -119,10 +126,8 @@ pub struct Ppu {
 impl Ppu {
   pub fn new(bus: SharedBus) -> Self {
     Self {
-      lcd: FrameBuffer::gameboy_lcd(), 
-      bg_scanline:  [0; 160],
-      wind_scanline: [0; 160],
-      spr_scanline: [0; 160],
+      lcd: FrameBuffer::gameboy_lcd(),
+      obj_scanline: [(0, false); 168],
 
       mode: Default::default(),
       vblank: None,
@@ -152,8 +157,9 @@ impl Ppu {
       self.ly_inc();
     }
 
+    let ly = self.ly();
     let mut stat = self.stat();
-    stat.set(Stat::lyc_eq_ly, self.ly() == self.read(LYC));
+    stat.set(Stat::lyc_eq_ly, ly == self.read(LYC));
     self.set_stat(stat);
 
     if stat.contains(Stat::lyc_eq_ly) {
@@ -163,32 +169,32 @@ impl Ppu {
     match self.mode {
       OamScan => {
         if self.tcycles >= 80 {
-          self.scan_sprites();
+          // self.scan_objs();
           self.mode = DrawingPixels;
         }
       }
       DrawingPixels => {
         if self.tcycles >= 80 + 172 {
           self.render_scanline();
-          self.scan_sprites();
-
+          self.render_objs();
+          
           self.mode = Hblank;
           self.send_lcd_int(Stat::mode0_int);
         }
       }
       Hblank => {
         if self.tcycles >= 456 {
-          if self.ly() > 143 {
+          if ly > 143 {
             self.mode = Vblank;
             self.send_vblank_int();
             self.send_lcd_int(Stat::mode1_int);
           } else {
-            self.mode = OamScan
+            self.mode = OamScan;
           };
         }
       }
       Vblank => {
-        if self.ly() >= 154 {
+        if ly >= 154 {
           self.ly_reset();
           self.mode = OamScan;
           self.send_lcd_int(Stat::mode2_int);
@@ -209,7 +215,7 @@ impl Ppu {
           let bit0 = (plane0 >> bit) & 1;
           let bit1 = ((plane1 >> bit) & 1) << 1;
           let color_idx = bit1 | bit0;
-          let color = self.palette_color(color_idx);
+          let color = self.bg_palette(color_idx);
 
           self.lcd.set_pixel(x + 7-bit, y + row, color);
       }
@@ -217,8 +223,8 @@ impl Ppu {
   }
 
   pub fn render_tile_row(&mut self, x: usize, y: usize, tileset_addr: usize, row: usize) {
-    let tile_addr = tileset_addr + row*2;
-    let tile_row = &self.bus.borrow().mem[tile_addr..tile_addr+2];
+    let tile_row_addr = tileset_addr + row*2;
+    let tile_row = &self.bus.borrow().mem[tile_row_addr..tile_row_addr+2];
 
     let plane0 = tile_row[0];
     let plane1 = tile_row[1];
@@ -227,13 +233,53 @@ impl Ppu {
         let bit0 = (plane0 >> bit) & 1;
         let bit1 = ((plane1 >> bit) & 1) << 1;
         let color_idx = bit1 | bit0;
-        let color = self.palette_color(color_idx);
+        let color = self.bg_palette(color_idx);
 
         self.lcd.set_pixel(x + 7-bit, y, color);
     }
   }
 
-  fn scan_sprites(&mut self) {
+  fn scan_objs(&mut self) {
+    let scanline = self.ly();
+    let mut visible = 0;
+
+    for i in (0..256).step_by(4) {
+      let mut y = self.read(OAM + i+0);
+      let mut x = self.read(OAM + i+1);
+
+      if y < 16 || y >= 160 || x < 8 || x >= 168 { continue; }
+      y -= 16;
+      x -= 8;
+
+      let row = scanline.abs_diff(y) as usize;
+      if row >= 8 { continue; }
+
+      let tile_id = self.read(OAM + i+2) as u16;
+      let attributes = self.read(OAM + i+3);
+      let priority = attributes >> 7 == 0;
+      let palette = attributes >> 4 != 0;
+
+      let tileset_addr = VRAM0 as usize + 16*tile_id as usize;
+      let tile_row_addr = tileset_addr + row*2;
+      let tile_row = &self.bus.borrow().mem[tile_row_addr..tile_row_addr+2];
+      let plane0 = tile_row[0];
+      let plane1 = tile_row[1];
+
+      for bit in 0..8 {
+        let bit0 = (plane0 >> bit) & 1;
+        let bit1 = ((plane1 >> bit) & 1) << 1;
+        let color_idx = bit1 | bit0;
+        let color = self.obj_palette(palette, color_idx);
+
+        self.obj_scanline[x as usize+bit] = (color, priority);
+      }
+
+      visible += 1;
+      if visible > 10 { break; }
+    }
+  }
+
+  fn render_objs(&mut self) {
     let scanline = self.ly();
 
     for i in (0..256).step_by(4) {
@@ -260,7 +306,7 @@ impl Ppu {
     let scy = self.read(SCY) as u16;
     let tilemap = self.bg_tilemap();
 
-    for pixel in (0..256).step_by(8) {
+    for pixel in (0..160).step_by(8) {
       let tilemap_addr = tilemap 
         + ((scy + scanline) % 256)/8 * 32
         + ((scx + pixel) % 256)/8;
@@ -364,8 +410,17 @@ impl Ppu {
     }
   }
 
-  fn palette_color(&self, colord_id: u8)  -> u8 {
-    let bg_palette = self.bus.borrow().ppu_regs.bg_palette;
+  fn bg_palette(&self, colord_id: u8)  -> u8 {
+    let bg_palette = self.bus.borrow().ppu_regs.bgp;
     (bg_palette >> (colord_id*2)) & 0b11
+  }
+
+  fn obj_palette(&self, obp: bool, colord_id: u8)  -> u8 {
+    let obj_palette = match obp {
+      false => self.bus.borrow().ppu_regs.obp0,
+      true => self.bus.borrow().ppu_regs.obp1,
+    };
+
+    (obj_palette >> (colord_id*2)) & 0b11
   }
 }

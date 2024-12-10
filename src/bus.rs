@@ -26,6 +26,7 @@ pub struct Bus {
   pub intf: InterruptFlags,
 }
 
+
 enum BusTarget {
   Rom, VRam, ExRam, WRam, Oam, Unused, Ppu, Timer, IO, HRam, IF, IE,
 }

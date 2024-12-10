@@ -250,7 +250,6 @@ impl Cpu {
 			self.dma.transfering = true;
 		} else if self.dma.transfering {
 			self.dma_write();
-			// println!("DMA writing {:04X} to {:04X}", self.dma.current(), 0xFE00 + self.dma.offset);
 			self.dma.tick();
 		}
 
@@ -281,7 +280,8 @@ impl Cpu {
 		let bus = self.bus.borrow();
 		let mut intf = bus.intf();
 
-		let pending_ints = bus.inte & intf;
+		let mut pending_ints = (bus.inte & intf).iter().collect::<Vec<_>>();
+		pending_ints.reverse();
 
 		for int in pending_ints {
 			let addr = match int {
