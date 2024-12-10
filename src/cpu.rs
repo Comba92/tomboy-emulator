@@ -259,6 +259,21 @@ impl Cpu {
 		}
 	}
 
+	pub fn debug_step(&mut self) {
+		let opcode = self.peek(self.pc-1);
+
+		if opcode == 0xCB {
+			let opcode = self.pc_fetch();
+			let instr = &INSTRUCTIONS[256 + opcode as usize];
+			self.execute_prefix(instr);
+		} else { 
+			let instr = &INSTRUCTIONS[opcode as usize];
+			self.execute_no_prefix(instr)
+		}
+
+		self.pc_fetch();
+	}
+
 	fn handle_interrupts(&mut self) {
 		let bus = self.bus.borrow();
 		let mut intf = bus.intf();

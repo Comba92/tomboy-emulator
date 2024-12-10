@@ -70,23 +70,30 @@ impl Bus {
   }
 
   pub fn read(&self, addr: u16) -> u8 {
-    match addr {
-      0xFF04..=0xFF07 => self.timer.read_reg(addr),
-      0xFF40..=0xFF4B => self.ppu_regs.read(addr),
-      0xFF0F => self.intf.get().bits(),
-      0xFFFF => self.inte.bits(),
-      _ => self.mem[addr as usize],
-    }
+    // match addr {
+    //   0xE000..=0xFDFF => self.mem[addr as usize & 0xDFFF],
+    //   0xFF04..=0xFF07 => self.timer.read_reg(addr),
+    //   0xFF40..=0xFF4B => self.ppu_regs.read(addr),
+    //   0xFF0F => self.intf.get().bits(),
+    //   0xFFFF => self.inte.bits(),
+    //   _ => self.mem[addr as usize],
+    // }
+
+    self.mem[addr as usize]
   }
 
   pub fn write(&mut self, addr: u16, val: u8) {
-    match addr {
-      0xFF04..=0xFF07 => self.timer.write_reg(addr, val),
-      0xFF40..=0xFF4B => self.ppu_regs.write(addr, val),
-      0xFF0F => self.intf.set(IFlags::from_bits_truncate(val & 0b1_1111)),
-      0xFFFF => self.inte = IFlags::from_bits_truncate(val & 0b1_1111),
-      _ => self.mem[addr as usize] = val,
-    }
+    // match addr {
+    //   0x0000..=0x7FFF => eprintln!("Illegal write to ROM"),
+    //   0xE000..=0xFDFF => self.mem[addr as usize & 0xDFFF] = val,
+    //   0xFF04..=0xFF07 => self.timer.write_reg(addr, val),
+    //   0xFF40..=0xFF4B => self.ppu_regs.write(addr, val),
+    //   0xFF0F => self.intf.set(IFlags::from_bits_truncate(val & 0b1_1111)),
+    //   0xFFFF => self.inte = IFlags::from_bits_truncate(val & 0b1_1111),
+    //   _ => self.mem[addr as usize] = val,
+    // }
+
+    self.mem[addr as usize] = val;
   }
 
   pub fn intf(&self) -> IFlags {
