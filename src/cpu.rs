@@ -183,6 +183,10 @@ impl Cpu {
 
 		self.tick();
 	}
+	fn dma_write(&mut self) {
+		let val = self.peek(self.dma.current());
+		self.bus.borrow_mut().write(0xFE00 + self.dma.offset, val);
+	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
 		self.write(addr as u16, lo);
@@ -245,8 +249,7 @@ impl Cpu {
 			self.dma.start_delay = false;
 			self.dma.transfering = true;
 		} else if self.dma.transfering {
-			let val = self.peek(self.dma.current());
-			self.write(0xFE00 + self.dma.offset, val);
+			self.dma_write();
 			// println!("DMA writing {:04X} to {:04X}", self.dma.current(), 0xFE00 + self.dma.offset);
 			self.dma.tick();
 		}
@@ -518,7 +521,7 @@ impl Cpu {
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
 
-		// TODO: factor this out
+		// TODO: probably not correct
 		if offset.is_negative() {
 			self.f.set(Flags::c, res & 0xFF <= self.sp & 0xFF);
 			self.f.set(Flags::h, res & 0xF <= self.sp & 0xF);
@@ -613,6 +616,7 @@ impl Cpu {
 		let val = self.get_operand16(&ops[0]);
 		let res = val.wrapping_add(1);
 		self.set_result16(&ops[0], res);
+		self.tick();
 	}
 
 	fn dec(&mut self, ops: &[InstrTarget]) {
@@ -630,6 +634,7 @@ impl Cpu {
 		let val = self.get_operand16(&ops[0]);
 		let res = val.wrapping_sub(1);
 		self.set_result16(&ops[0], res);
+		self.tick();
 	}
 
 	fn logical<F: Fn(u8, u8) -> u8>(&mut self, ops: &[InstrTarget], f: F) {
@@ -725,7 +730,7 @@ impl Cpu {
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
 
-		// TODO: factor this out
+		// TODO: probably not correct
 		if offset.is_negative() {
 			self.f.set(Flags::c, res & 0xFF <= self.sp & 0xFF);
 			self.f.set(Flags::h, res & 0x0F <= self.sp & 0x0F);

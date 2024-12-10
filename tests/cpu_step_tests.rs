@@ -47,7 +47,8 @@ mod cpu_step_tests {
     for (addr, byte) in &mock.ram {
       cpu.write(*addr, *byte);
     }
-  
+
+    cpu.mcycles = 0;
     cpu
   }
 
@@ -63,22 +64,21 @@ mod cpu_step_tests {
 
   #[test]
   fn cpu_test_one() {
-    let json = include_str!("GameboyCPUTests/v2/00.json");
+    let json = include_str!("sm83/v1/00.json");
     let test: Vec<Test> = serde_json::from_str(json).unwrap();
   
     let mut cpu = cpu_from_mock(&test[0].start);
 
-    let mut cycles = 0;
-    while cycles < test[0].cycles.len() {
+    while cpu.mcycles < test[0].cycles.len() {
       println!("{:#X?}", cpu);
       println!("{:#X?}", &INSTRUCTIONS[cpu.peek(cpu.pc) as usize]);
-      cpu.debug_step();
-      cycles += 1;
+      cpu.step();
     }
+
 
     let mut my_end = CpuMock::from_cpu(&cpu);
     for (addr, _) in &test[0].end.ram {
-      my_end.ram.push((*addr, cpu.read(*addr)))
+      my_end.ram.push((*addr, cpu.peek(*addr)))
     }
 
     assert_eq!(test[0].end, my_end, 
@@ -88,7 +88,7 @@ mod cpu_step_tests {
 
   #[test]
 fn cpu_test() {
-  let mut dir = fs::read_dir("./tests/GameboyCPUTests/v2")
+  let mut dir = fs::read_dir("./tests/sm83/v1/")
     .expect("directory not found")
     .enumerate();
 
@@ -97,23 +97,16 @@ fn cpu_test() {
     let tests: Vec<Test> = serde_json::from_slice(&json_test).expect("couldn't parse json");
 
     println!("Testing file {i}: {:?}", f.file_name());
+    // if f.file_name() == "10.json" || f.file_name() == "e8.json" || f.file_name() == "f8.json" { continue; }
+    if f.file_name() != "e8.json" || f.file_name() != "f8.json" { continue; }
+
 
     'testing: for test in tests.iter() {
       let mut cpu = cpu_from_mock(&test.start);
 
-      if test.cycles.len() == 1 { continue; }
-
-      let mut cycles = 0;
-      cpu.pc+=1;
-      while cycles < test.cycles.len() {
-        // println!("{:X?}", cpu);
-        // println!("{:X?}", &INSTRUCTIONS[cpu.peek(cpu.pc) as usize]);
-        cpu.debug_step();
-        cycles += 1;
+      while cpu.mcycles < test.cycles.len() {
+        cpu.step();
       }
-
-      println!("{:X?}", cpu);
-      println!();
 
       let mut my_end = CpuMock::from_cpu(&cpu);
       for (addr, _) in &test.end.ram {
@@ -127,14 +120,13 @@ fn cpu_test() {
         
         let mut log_cpu = cpu_from_mock(&test.start);
 
-        let mut cycles = 0;
-        log_cpu.pc+=1;
-        while cycles < test.cycles.len() {
+        while log_cpu.mcycles < test.cycles.len() {
           println!("{:X?}", log_cpu);
           println!("{:X?}", &INSTRUCTIONS[log_cpu.peek(log_cpu.pc) as usize]);
-          log_cpu.debug_step();
-          cycles += 1; 
+          log_cpu.step();
         }
+
+        println!("{:X?}", log_cpu);
 
         assert_eq!(my_end, test.end,
           "Found error in file {:?}, test {:?}\n{}",

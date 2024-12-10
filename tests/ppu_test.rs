@@ -151,14 +151,23 @@ mod ppu_test {
         }
       }
 
+      // for i in 0..40 {
+      //   let x = i % (WIN_WIDTH as usize/16);
+      //   let y = i / (WIN_WIDTH as usize/16);
+      //   let tile_id = emu.read(0xFE00 + 4*i as u16 + 2);
+      //   let tile_start = emu.read(0x8000 + 16*tile_id as u16) as usize;
+      //   let tile = &emu.bus.borrow().mem[tile_start..tile_start+16];
+      //   framebuf.set_tile(x*16, y*16, &tile);
+      // }
       for i in 0..40 {
         let x = i % (WIN_WIDTH as usize/16);
         let y = i / (WIN_WIDTH as usize/16);
-        let tile_id = emu.read(0xFE00 + 4*i as u16 + 2);
-        let tile_start = emu.read(0x8000 + 16*tile_id as u16) as usize;
+        let tile_start = 0x8000 + i*16;
+        // let tile_id = emu.read(0xFE00 + 4*i as u16 + 2);
         let tile = &emu.bus.borrow().mem[tile_start..tile_start+16];
         framebuf.set_tile(x*16, y*16, &tile);
       }
+
 
       canvas.clear();
       texture.update(None, &framebuf.buffer, framebuf.pitch())?;

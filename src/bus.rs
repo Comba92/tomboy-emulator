@@ -1,6 +1,6 @@
 use std::{cell::{Cell, RefCell}, rc::Rc};
 
-use crate::{ppu, timer::Timer};
+use crate::{joypad::Joypad, ppu, timer::Timer};
 use bitflags::bitflags;
 
 bitflags! {
@@ -20,6 +20,8 @@ pub struct Bus {
 	pub mem: [u8; 0x10000],
   pub ppu_regs: ppu::Registers,
   pub timer: Timer,
+  pub joypad: Joypad,
+
   pub inte: IFlags,
   pub intf: InterruptFlags,
 }
@@ -62,6 +64,7 @@ impl Bus {
       mem: [0; 0x10000],
       ppu_regs: ppu::Registers::default(),
       timer: Timer::new(intf.clone()),
+      joypad: Joypad::new(intf.clone()),
       inte: IFlags::empty(), 
       intf,
     };
@@ -70,30 +73,32 @@ impl Bus {
   }
 
   pub fn read(&self, addr: u16) -> u8 {
-    // match addr {
-    //   0xE000..=0xFDFF => self.mem[addr as usize & 0xDFFF],
-    //   0xFF04..=0xFF07 => self.timer.read_reg(addr),
-    //   0xFF40..=0xFF4B => self.ppu_regs.read(addr),
-    //   0xFF0F => self.intf.get().bits(),
-    //   0xFFFF => self.inte.bits(),
-    //   _ => self.mem[addr as usize],
-    // }
+    match addr {
+      0xE000..=0xFDFF => self.mem[addr as usize & 0xDFFF],
+      0xFF00 => self.joypad.read(),
+      0xFF04..=0xFF07 => self.timer.read_reg(addr),
+      0xFF40..=0xFF4B => self.ppu_regs.read(addr),
+      0xFF0F => self.intf.get().bits(),
+      0xFFFF => self.inte.bits(),
+      _ => self.mem[addr as usize],
+    }
 
-    self.mem[addr as usize]
+    // self.mem[addr as usize]
   }
 
   pub fn write(&mut self, addr: u16, val: u8) {
-    // match addr {
-    //   0x0000..=0x7FFF => eprintln!("Illegal write to ROM"),
-    //   0xE000..=0xFDFF => self.mem[addr as usize & 0xDFFF] = val,
-    //   0xFF04..=0xFF07 => self.timer.write_reg(addr, val),
-    //   0xFF40..=0xFF4B => self.ppu_regs.write(addr, val),
-    //   0xFF0F => self.intf.set(IFlags::from_bits_truncate(val & 0b1_1111)),
-    //   0xFFFF => self.inte = IFlags::from_bits_truncate(val & 0b1_1111),
-    //   _ => self.mem[addr as usize] = val,
-    // }
+    match addr {
+      0x0000..=0x7FFF => eprintln!("Illegal write to ROM"),
+      0xE000..=0xFDFF => self.mem[addr as usize & 0xDFFF] = val,
+      0xFF00 => self.joypad.write(val),
+      0xFF04..=0xFF07 => self.timer.write_reg(addr, val),
+      0xFF40..=0xFF4B => self.ppu_regs.write(addr, val),
+      0xFF0F => self.intf.set(IFlags::from_bits_truncate(val & 0b1_1111)),
+      0xFFFF => self.inte = IFlags::from_bits_truncate(val & 0b1_1111),
+      _ => self.mem[addr as usize] = val,
+    }
 
-    self.mem[addr as usize] = val;
+    // self.mem[addr as usize] = val;
   }
 
   pub fn intf(&self) -> IFlags {

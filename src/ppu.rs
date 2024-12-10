@@ -248,7 +248,7 @@ impl Ppu {
       if row >= 8 { continue; }
 
       let tile_id = self.read(OAM + i+2) as u16;
-      let tileset_addr = self.read(VRAM0 + tile_id*16) as usize;
+      let tileset_addr = VRAM0 as usize + 16*tile_id as usize;
       self.render_tile_row(x as usize, y as usize + row, tileset_addr, row as usize);
     }
   }
