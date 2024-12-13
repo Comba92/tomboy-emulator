@@ -1,17 +1,19 @@
+use std::collections::VecDeque;
+
 use bitflags::bitflags;
 use crate::{bus::{self, SharedBus}, frame::FrameBuffer};
 
 bitflags! {
   #[derive(Default, Clone, Copy)]
   pub struct Ctrl: u8 {
-    const bg_wind_on = 0b0000_0001;
+    const bg_wnd_on = 0b0000_0001;
     const obj_on     = 0b0000_0010;
     const obj_size   = 0b0000_0100;
     const bg_tilemap = 0b0000_1000;
 
-    const tiles_addr   = 0b0001_0000;
-    const window_on    = 0b0010_0000;
-    const wind_tilemap = 0b0100_0000;
+    const tileset_addr = 0b0001_0000;
+    const wndow_on    = 0b0010_0000;
+    const wnd_tilemap = 0b0100_0000;
     const ppu_on       = 0b1000_0000;
   }
 
@@ -60,7 +62,8 @@ const OAM: u16 = 0xFE00;
 const VRAM0: u16 = 0x8000;
 const VRAM1: u16 = 0x8800;
 const VRAM2: u16 = 0x9000;
-
+const MAP0: u16 = 0x9800;
+const MAP1: u16 = 0x9C00; 
 
 impl Registers {
   pub fn read(&self, addr: u16) -> u8 {
@@ -112,14 +115,41 @@ enum PpuMode {
   DrawingPixels, // Mode3
 }
 
+#[derive(Default)]
+struct RenderData {
+  step: RenderStep,
+  dot: bool,
+  scaline_x: u8,
+  tilemap_x: u8,
+  tilemap_y: u8,
+  tile_id: u8,
+  tileset_addr: u16,
+  tile_data_low: u8,
+  tile_data_high: u8,
+}
+
+struct FifoData {
+  color: u8,
+  palette: u8,
+  priority: u8,
+}
+
+#[derive(Default)]
+enum RenderStep {
+  #[default] Tile, DataLow, DataHigh, Sleep
+}
+
 pub struct Ppu {
   pub lcd: FrameBuffer,
-  obj_scanline: [(u8, bool); 168],
+
+  render: RenderData,
+  bg_fifo: VecDeque<u8>,
+  wnd_line: u8,
 
   mode: PpuMode,
   pub vblank: Option<()>,
 
-  tcycles: usize,
+  tcycles: u16,
   bus: SharedBus,
 }
 
@@ -127,12 +157,14 @@ impl Ppu {
   pub fn new(bus: SharedBus) -> Self {
     Self {
       lcd: FrameBuffer::gameboy_lcd(),
-      obj_scanline: [(0, false); 168],
+      render: RenderData::default(),
+      bg_fifo: VecDeque::new(),
 
       mode: Default::default(),
       vblank: None,
 
       tcycles: Default::default(), 
+      wnd_line: Default::default(),
       bus,
     }
   }
@@ -145,46 +177,56 @@ impl Ppu {
   fn send_lcd_int(&mut self, flag: Stat) {
     if self.stat().contains(flag) {
       bus::send_interrupt(&self.bus.borrow().intf, bus::IFlags::lcd);
-    } 
+    }
   }
   
   pub fn tick(&mut self) {
     use PpuMode::*;
     
     self.tcycles += 1;
+    let mut stat = self.stat();
     if self.tcycles > 456 {
       self.tcycles = 0;
       self.ly_inc();
+      if self.ly() >= self.read(WY) {
+        self.wnd_line += 1;
+      }
+
+      if stat.contains(Stat::lyc_eq_ly) {
+        self.send_lcd_int(Stat::lyc_int);
+      }
     }
 
     let ly = self.ly();
-    let mut stat = self.stat();
     stat.set(Stat::lyc_eq_ly, ly == self.read(LYC));
     self.set_stat(stat);
-
-    if stat.contains(Stat::lyc_eq_ly) {
-      self.send_lcd_int(Stat::lyc_int);
-    }
 
     match self.mode {
       OamScan => {
         if self.tcycles >= 80 {
-          // self.scan_objs();
+          self.bg_fifo.clear();
+          self.render = RenderData::default();
+
           self.mode = DrawingPixels;
         }
       }
       DrawingPixels => {
         if self.tcycles >= 80 + 172 {
-          self.render_scanline();
-          self.render_objs();
-          
+          // self.render_bg_scanline();
+          // self.render_wnd_scanline();
+          self.render_objs_scanline();
+
           self.mode = Hblank;
           self.send_lcd_int(Stat::mode0_int);
+        } else {
+          self.bg_step();
         }
       }
       Hblank => {
         if self.tcycles >= 456 {
           if ly > 143 {
+            self.wnd_line = 0;
+            
             self.mode = Vblank;
             self.send_vblank_int();
             self.send_lcd_int(Stat::mode1_int);
@@ -203,6 +245,74 @@ impl Ppu {
     };
   }
 
+  fn bg_step(&mut self) {
+    self.render.dot = !self.render.dot;
+
+    if !self.render.dot {
+      use RenderStep::*;
+      match &self.render.step {
+        Tile => {
+          self.render.tilemap_y = self.read(SCY) + self.ly();
+          let wx = self.read(WX);
+          let wy = self.read(WY);
+
+          let (x, y, tilemap) = if self.ly() >= wy 
+          && self.render.scaline_x >= wx {
+            if self.wnd_line == 0 {
+              self.bg_fifo.clear();
+            }
+
+            self.render.tilemap_y = self.wnd_line;
+            (wx as u16-7, self.wnd_line as u16, self.wnd_tilemap())
+          } else {
+            let x = 
+            (self.read(SCX) + self.render.tilemap_x) as u16 % 256;
+            let y = 
+              self.render.tilemap_y as u16 % 256;
+            (x, y, self.bg_tilemap())
+          };
+
+          let tilemap_addr  = tilemap + 32 * (y/8) + x/8;
+          self.render.tile_id = self.read(tilemap_addr);
+
+          self.render.step = DataLow;
+        }
+        DataLow => {
+          self.render.tileset_addr = 
+            self.tileset_addr(self.render.tile_id)
+            + 2 * (self.render.tilemap_y as u16 % 8);
+            
+          self.render.tile_data_low = self.read(self.render.tileset_addr);
+
+          self.render.step = DataHigh;
+        }
+        DataHigh => {
+          self.render.tile_data_high = 
+            self.read(self.render.tileset_addr.wrapping_add(1));
+
+          for bit in (0..8).rev() {
+            let lo = (self.render.tile_data_low  >> bit) & 1;
+            let hi = (self.render.tile_data_high >> bit) & 1;
+            let pixel = (hi << 1) | lo;
+            self.bg_fifo.push_back(pixel);
+          }
+
+          self.render.step = Sleep;
+        }
+        Sleep => {
+          self.render.step = Tile;
+        }
+      };
+    }
+
+    if self.bg_fifo.len() > 8 {
+      let pixel = self.bg_fifo.pop_front().unwrap();
+      self.lcd.set_pixel(self.render.scaline_x as usize, self.ly() as usize, pixel);
+      self.render.scaline_x += 1;
+    }
+
+    self.render.tilemap_x += 1;
+  }
 
   pub fn render_tile(&mut self, x: usize, y: usize, tile_addr: usize) {
     let tile = &self.bus.borrow().mem[tile_addr..tile_addr+16];
@@ -222,7 +332,7 @@ impl Ppu {
     }
   }
 
-  pub fn render_tile_row(&mut self, x: usize, y: usize, tileset_addr: usize, row: usize) {
+  pub fn render_tile_row(&mut self, x: usize, y: usize, tileset_addr: usize, row: usize, obj_attr: Option<u8>) {
     let tile_row_addr = tileset_addr + row*2;
     let tile_row = &self.bus.borrow().mem[tile_row_addr..tile_row_addr+2];
 
@@ -233,16 +343,29 @@ impl Ppu {
         let bit0 = (plane0 >> bit) & 1;
         let bit1 = ((plane1 >> bit) & 1) << 1;
         let color_idx = bit1 | bit0;
-        let color = self.bg_palette(color_idx);
 
-        self.lcd.set_pixel(x + 7-bit, y, color);
+        if let Some(attr) = obj_attr {
+          let priority = attr >> 7 == 0;
+          if color_idx == 0 || !priority {continue;}
+          let y_flip = (attr >> 6) & 1 == 1;
+          let x_flip = (attr >> 5) & 1 == 1;
+          let palette = (attr >> 4) & 1 == 1;
+          let offset = if x_flip {bit} else {7-bit}; 
+          let color = self.obj_palette(palette, color_idx);
+          self.lcd.set_pixel(x + offset, y, color);
+        } else {
+          let color = self.bg_palette(color_idx);
+          self.lcd.set_pixel(x + 7-bit, y, color);
+        }
     }
   }
 
-  fn scan_objs(&mut self) {
+  fn render_objs_scanline(&mut self) {
+    if !self.ctrl().contains(Ctrl::ppu_on) || !self.ctrl().contains(Ctrl::obj_on) { return; }
+
     let scanline = self.ly();
+
     let mut visible = 0;
-
     for i in (0..256).step_by(4) {
       let mut y = self.read(OAM + i+0);
       let mut x = self.read(OAM + i+1);
@@ -254,52 +377,18 @@ impl Ppu {
       let row = scanline.abs_diff(y) as usize;
       if row >= 8 { continue; }
 
-      let tile_id = self.read(OAM + i+2) as u16;
       let attributes = self.read(OAM + i+3);
-      let priority = attributes >> 7 == 0;
-      let palette = attributes >> 4 != 0;
-
-      let tileset_addr = VRAM0 as usize + 16*tile_id as usize;
-      let tile_row_addr = tileset_addr + row*2;
-      let tile_row = &self.bus.borrow().mem[tile_row_addr..tile_row_addr+2];
-      let plane0 = tile_row[0];
-      let plane1 = tile_row[1];
-
-      for bit in 0..8 {
-        let bit0 = (plane0 >> bit) & 1;
-        let bit1 = ((plane1 >> bit) & 1) << 1;
-        let color_idx = bit1 | bit0;
-        let color = self.obj_palette(palette, color_idx);
-
-        self.obj_scanline[x as usize+bit] = (color, priority);
-      }
-
-      visible += 1;
-      if visible > 10 { break; }
-    }
-  }
-
-  fn render_objs(&mut self) {
-    let scanline = self.ly();
-
-    for i in (0..256).step_by(4) {
-      let mut y = self.read(OAM + i+0);
-      let mut x = self.read(OAM + i+1);
-
-      if y < 16 || y >= 160 || x < 8 || x >= 168 { continue; }
-      y -= 16;
-      x -= 8;
-
-      let row = scanline.abs_diff(y) as usize;
-      if row >= 8 { continue; }
 
       let tile_id = self.read(OAM + i+2) as u16;
       let tileset_addr = VRAM0 as usize + 16*tile_id as usize;
-      self.render_tile_row(x as usize, y as usize + row, tileset_addr, row as usize);
+      self.render_tile_row(x as usize, y as usize + row, tileset_addr, row as usize, Some(attributes));
+    
+      visible += 1;
+      if visible >= 10 {break;}
     }
   }
 
-  fn render_scanline(&mut self) {
+  fn render_bg_scanline(&mut self) {
     let scanline = self.ly() as u16;
 
     let scx = self.read(SCX) as u16;
@@ -311,9 +400,40 @@ impl Ppu {
         + ((scy + scanline) % 256)/8 * 32
         + ((scx + pixel) % 256)/8;
 
+
       let tile_id = self.read(tilemap_addr);
-      let tileset_addr = self.tile_addr(tile_id) as usize;
-      self.render_tile_row(pixel as usize, scanline as usize, tileset_addr, (scy + scanline) as usize%8);
+      let tileset_addr = self.tileset_addr(tile_id) as usize;
+
+      if !self.ctrl().contains(Ctrl::ppu_on) || !self.ctrl().contains(Ctrl::bg_wnd_on) {
+        self.render_tile_row(pixel as usize, scanline as usize, 0, (scy + scanline) as usize%8, None);
+      } else {
+        self.render_tile_row(pixel as usize, scanline as usize, tileset_addr, (scy + scanline) as usize%8, None);
+      }
+    }
+  }
+
+  fn render_wnd_scanline(&mut self) {
+    if !self.ctrl().contains(Ctrl::ppu_on) 
+    || !self.ctrl().contains(Ctrl::bg_wnd_on) 
+    || !self.ctrl().contains(Ctrl::wndow_on) {return;}
+
+    let mut wx = self.read(WX) as u16;
+    let wy = self.read(WY) as u16;
+    let scanline = self.ly() as u16;
+
+    if wy < scanline || wx < 7 || wx >= 166 || wy >= 143 { return; } 
+    wx -= 7;
+    let tilemap = self.wnd_tilemap();
+    let row = scanline.abs_diff(wy) as u16;
+
+    for pixel in (wx..160).step_by(8) {
+      let tilemap_addr = tilemap
+        + row/8 * 32
+        + pixel/8;
+
+      let tile_id = self.read(tilemap_addr);
+      let tileset_addr = self.tileset_addr(tile_id) as usize;
+      self.render_tile_row(pixel as usize, scanline as usize, tileset_addr, row as usize%8, None);
     }
   }
 
@@ -329,7 +449,7 @@ impl Ppu {
           + ((scx + x) % 32);
 
         let tile_id = self.read(tilemap_addr);
-        let tileset_addr = self.tile_addr(tile_id) as usize;
+        let tileset_addr = self.tileset_addr(tile_id) as usize;
 
         self.render_tile(8*x as usize, 8*y as usize, tileset_addr);
       }
@@ -362,20 +482,6 @@ impl Ppu {
     self.bus.borrow_mut().write(addr, val);
   }
 
-  fn bg_tilemap(&self) -> u16 {
-    match self.ctrl().contains(Ctrl::bg_tilemap) {
-      false => 0x9800,
-      true => 0x9C00,
-    }
-  }
-
-  fn wind_tilemap(&self) -> u16 {
-    match self.ctrl().contains(Ctrl::wind_tilemap) {
-      false => 0x9800,
-      true  => 0x9C00,
-    }
-  }
-
   fn ctrl(&self) -> Ctrl {
     self.bus.borrow().ppu_regs.ctrl
   }
@@ -400,13 +506,34 @@ impl Ppu {
     self.bus.borrow_mut().ppu_regs.ly = 0;
   }
 
-  pub fn tile_addr(&self, tile_id: u8) -> u16 {
-    match self.ctrl().contains(Ctrl::tiles_addr) {
+  fn tile_data_addr(&self, offset: u8) -> u16 {
+    match self.ctrl().contains(Ctrl::tileset_addr) {
+      true => VRAM0 + offset as u16,
+      false => (VRAM2.wrapping_add_signed((offset as i8) as i16)) as u16
+    }
+  }
+
+  pub fn tileset_addr(&self, tile_id: u8) -> u16 {
+    match self.ctrl().contains(Ctrl::tileset_addr) {
       true  => VRAM0 + 16*tile_id as u16,
       false => {
         let offset = tile_id as i8;
         (VRAM2 as i32 + 16*offset as i32) as u16
       }
+    }
+  }
+
+  fn bg_tilemap(&self) -> u16 {
+    match self.ctrl().contains(Ctrl::bg_tilemap) {
+      false => MAP0,
+      true  => MAP1,
+    }
+  }
+
+  fn wnd_tilemap(&self) -> u16 {
+    match self.ctrl().contains(Ctrl::wnd_tilemap) {
+      false => MAP0,
+      true  => MAP1,
     }
   }
 

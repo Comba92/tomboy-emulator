@@ -1,7 +1,7 @@
 use std::{error::Error, fs, time};
 
 use sdl2::{event::Event, pixels::PixelFormatEnum};
-use tomboy_emulator::cpu::Cpu;
+use tomboy_emulator::{cart::Cart, cpu::Cpu};
 
 fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
@@ -19,12 +19,12 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut events = sdl.event_pump()?;
 
   let mut emu = Cpu::new();
-  let rom = fs::read("./tests/roms/02-interrupts.gb")?;
+  let rom = fs::read("./tests/roms/dmg-acid2.gb")?;
   // let rom = fs::read("./roms/Tetris.gb")?;
   // let rom = fs::read("./bootroms/dmg_boot.bin")?;
 
-  //let cart = Cart::new(&rom);
-  //println!("{:?}", cart);
+  let cart = Cart::new(&rom);
+  println!("{:?}", cart);
 
   let mut bus = emu.bus.borrow_mut();
   let (left, _) = bus.mem.split_at_mut(rom.len());

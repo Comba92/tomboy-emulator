@@ -21,7 +21,7 @@ pub struct Joypad {
 impl Joypad {
   pub fn new(intf: bus::InterruptFlags) -> Self {
     Self {
-      flags: Flags::empty(),
+      flags: Flags::all(),
       intf,
     }
   }
@@ -29,16 +29,16 @@ impl Joypad {
   pub fn button_pressed(&mut self, button: Flags) {
     // TODO: interrupt sending logic (not simple)
 
-    self.flags.insert(button);
+    self.flags.remove(button);
   }
 
   pub fn button_released(&mut self, button: Flags) {
-    self.flags.remove(button);
+    self.flags.insert(button);
   }
 
   pub fn read(&self) -> u8 {
     if self.flags.contains(Flags::buttons) && self.flags.contains(Flags::dpad) {
-      0xF
+      0xFF
     } else { self.flags.bits() & 0b1111 }
   }
 
