@@ -19,6 +19,7 @@ pub type InterruptFlags = Rc<Cell<IFlags>>;
 pub struct Bus {
 	pub mem: [u8; 0x10000],
   pub ppu_regs: ppu::Registers,
+
   pub timer: Timer,
   pub joypad: Joypad,
 
@@ -64,6 +65,7 @@ impl Bus {
     let bus = Self { 
       mem: [0; 0x10000],
       ppu_regs: ppu::Registers::default(),
+
       timer: Timer::new(intf.clone()),
       joypad: Joypad::new(intf.clone()),
       inte: IFlags::empty(), 
@@ -73,6 +75,7 @@ impl Bus {
     Rc::new(RefCell::new(bus))
   }
 
+  // TODO: return 0xff is ppu is enabled
   pub fn read(&self, addr: u16) -> u8 {
     match addr {
       0xE000..=0xFDFF => self.mem[addr as usize & 0xDFFF],
