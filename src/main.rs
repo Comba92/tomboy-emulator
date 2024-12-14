@@ -18,18 +18,11 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let mut events = sdl.event_pump()?;
 
-  let mut emu = Cpu::new();
   let rom = fs::read("./tests/roms/dmg-acid2.gb")?;
   // let rom = fs::read("./roms/Tetris.gb")?;
   // let rom = fs::read("./bootroms/dmg_boot.bin")?;
-
-  let cart = Cart::new(&rom);
-  println!("{:?}", cart);
-
-  let mut bus = emu.bus.borrow_mut();
-  let (left, _) = bus.mem.split_at_mut(rom.len());
-  left.copy_from_slice(&rom);
-  drop(bus);
+  
+  let mut emu = Cpu::new(&rom);
 
   let texture_creator = canvas.texture_creator();
   let mut texture = texture_creator
@@ -48,13 +41,8 @@ fn main() -> Result<(), Box<dyn Error>> {
       match event {
         Event::Quit { .. } => break 'running,
         Event::DropFile { filename, .. } => {
-          emu = Cpu::new();
-
           let rom = fs::read(filename)?;
-          let mut bus = emu.bus.borrow_mut();
-          let (left, _) = bus.mem.split_at_mut(rom.len());
-          left.copy_from_slice(&rom);
-          drop(bus);
+          emu = Cpu::new(&rom);
         }
         _ => {}
       }

@@ -323,7 +323,8 @@ impl Ppu {
   }
 
   pub fn render_tile(&mut self, x: usize, y: usize, tile_addr: usize) {
-    let tile = &self.bus.borrow().mem[tile_addr..tile_addr+16];
+    let tile_addr = tile_addr - VRAM0 as usize;
+    let tile = &self.bus.borrow().vram[tile_addr..tile_addr+16];
 
     for row in 0..8 {
       let plane0 = tile[row*2];
@@ -354,10 +355,9 @@ impl Ppu {
     };
 
     let tile_row_addr = tileset_addr + y_offset.abs_diff(row)*2;
-    let tile_row = &self.bus.borrow().mem[tile_row_addr..tile_row_addr+2];
 
-    let plane0 = tile_row[0];
-    let plane1 = tile_row[1];
+    let plane0 = self.read(tile_row_addr as u16);
+    let plane1 = self.read(tile_row_addr as u16+1);
 
     for bit in 0..8 {
         let bit0 = (plane0 >> bit) & 1;
@@ -439,24 +439,25 @@ impl Ppu {
     }
   }
 
-  // TODO: not working
   fn render_wnd_scanline(&mut self) {
     if !self.ctrl().contains(Ctrl::lcd_enabled) 
     || !self.ctrl().contains(Ctrl::bg_wnd_enabled) 
     || !self.ctrl().contains(Ctrl::wnd_enabled) {return;}
 
-    let wx = self.read(WX) as u16;
+    let mut wx = self.read(WX) as u16;
     let wy = self.read(WY) as u16;
     let scanline = self.ly() as u16;
 
-    if wy < scanline || wx < 7 || wx >= 166 || wy >= 143 { return; }
+    if scanline < wy || wx < 7 || wx >= 166 || wy >= 143 { return; }
+    wx -= 7;
     let tilemap = self.wnd_tilemap();
-    let row = wy.abs_diff(scanline);
+    let row = self.wnd_line as u16;
+    self.wnd_line += 1;
 
     for pixel in (wx..160).step_by(8) {
       let tilemap_addr = tilemap
         + row/8 * 32
-        + (pixel - wx)/8;
+        + (pixel + 7 - wx)/8;
 
       let tile_id = self.read(tilemap_addr);
       let tileset_addr = self.tileset_addr(tile_id) as usize;
@@ -526,9 +527,9 @@ impl Ppu {
   }
 
   fn ly_inc(&mut self) {
-    if self.ly() >= self.read(WY) {
-      self.wnd_line += 1;
-    }
+    // if self.ly() >= self.read(WY) {
+    //   self.wnd_line += 1;
+    // }
     self.bus.borrow_mut().ppu_regs.ly += 1;
 
     let ly = self.ly();

@@ -4,9 +4,7 @@ use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
 use crate::{
-	bus::{Bus, IFlags, SharedBus},
-	instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, 
-	ppu::Ppu
+	bus::{Bus, IFlags, SharedBus}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, ppu::Ppu
 };
 
 bitflags! {
@@ -84,8 +82,8 @@ impl Dma {
 }
 
 impl Cpu {
-	pub fn new() -> Self {
-		let bus = Bus::new();
+	pub fn new(rom: &[u8]) -> Self {
+		let bus = Bus::new(rom);
 
 		Self {
 			a: 1,

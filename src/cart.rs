@@ -4,16 +4,16 @@ use std::{collections::HashMap, sync::LazyLock};
 #[allow(unused)]
 #[derive(Debug)]
 pub struct Cart {
-    cart_type: &'static str,
-    mapper_code: u8,
+    pub cart_type: &'static str,
+    pub mapper_code: u8,
     title: String,
     licensee: &'static str,
     licensee_new: &'static str,
     region: Region,
-    cgb_mode: CgbMode,
-    sgb_support: bool,
-    rom_size: usize,
-    ram_size: usize,
+    pub cgb_mode: CgbMode,
+    pub sgb_support: bool,
+    pub rom_size: usize,
+    pub ram_size: usize,
     version: u8,
     checksum: u8,
 }
