@@ -423,7 +423,7 @@ impl Ppu {
     let scy = self.read(SCY) as u16;
     let tilemap = self.bg_tilemap();
 
-    for pixel in (0..160).step_by(8) {
+    for pixel in (8..160).step_by(8) {
       let tilemap_addr = tilemap 
         + ((scy + scanline) % 256)/8 * 32
         + ((scx + pixel) % 256)/8;
@@ -432,9 +432,9 @@ impl Ppu {
       let tileset_addr = self.tileset_addr(tile_id) as usize;
 
       if !self.ctrl().contains(Ctrl::lcd_enabled) || !self.ctrl().contains(Ctrl::bg_wnd_enabled) {
-        self.render_tile_row(pixel as usize, scanline as usize, 0, (scy + scanline) as usize%8, None);
+        self.render_tile_row((pixel - scx%8) as usize, scanline as usize, 0, (scy + scanline) as usize%8, None);
       } else {
-        self.render_tile_row(pixel as usize, scanline as usize, tileset_addr, (scy + scanline) as usize%8, None);
+        self.render_tile_row((pixel - scx%8) as usize, scanline as usize, tileset_addr, (scy + scanline) as usize%8, None);
       }
     }
   }

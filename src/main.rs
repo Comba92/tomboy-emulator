@@ -1,7 +1,7 @@
 use std::{error::Error, fs, time};
 
-use sdl2::{event::Event, pixels::PixelFormatEnum};
-use tomboy_emulator::{cart::Cart, cpu::Cpu};
+use sdl2::{event::Event, keyboard::Keycode, pixels::PixelFormatEnum};
+use tomboy_emulator::{cart::Cart, cpu::Cpu, joypad};
 
 fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
@@ -44,28 +44,40 @@ fn main() -> Result<(), Box<dyn Error>> {
           let rom = fs::read(filename)?;
           emu = Cpu::new(&rom);
         }
+        Event::KeyDown { keycode, .. } => {
+          if let Some(keycode) = keycode {
+            match keycode {
+              Keycode::Up => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::select_up); }
+              Keycode::Down => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::start_down); }
+              Keycode::Left => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::b_left ); }
+              Keycode::Right => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::a_right ); }
+              Keycode::Z => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::a_right ); }
+              Keycode::X => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::b_left); }
+              Keycode::M => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::start_down); }
+              Keycode::N => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::select_up); }
+              _ => {}
+            }
+          }
+        }
+        Event::KeyUp { keycode, .. } => {
+          if let Some(keycode) = keycode {
+            match keycode {
+              Keycode::Up => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::select_up); }
+              Keycode::Down => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::start_down); }
+              Keycode::Left => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::b_left ); }
+              Keycode::Right => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::a_right ); }
+              Keycode::Z => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::a_right ); }
+              Keycode::X => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::b_left); }
+              Keycode::M => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::start_down); }
+              Keycode::N => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::select_up); }
+              _ => {}
+            }
+          }
+        }
         _ => {}
       }
 
     }
-    
-    // for i in 0..384 {
-    //   let x = i % (WIN_WIDTH as usize/16);
-    //   let y = i / (WIN_WIDTH as usize/16);
-    //   let tile_start = 0x8000 + i*16;
-    //   let tile = &emu.bus.mem[tile_start..tile_start+16];
-    //   framebuf.set_tile(x*16, y*16, &tile);
-    // }
-
-    // for i in 0..20*18 {
-    //   let x = i % 20;
-    //   let y = i / 20;
-
-    //   let tile_id = emu.read(0x9800 + y*20 + x);
-    //   let tile_addr = emu.ppu.tile_addr(tile_id) as usize;
-    //   let tile = &emu.bus.borrow().mem[tile_addr..tile_addr+16];
-    //   framebuf.set_tile(x as usize*8, y as usize*8, &tile);
-    // }
     
     canvas.clear();
     texture.update(None, &emu.ppu.lcd.buffer, emu.ppu.lcd.pitch())?;

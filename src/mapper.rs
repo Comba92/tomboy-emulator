@@ -66,7 +66,9 @@ impl Mapper for Mbc1 {
   fn write_ram(&self, ram: &mut [u8], addr: u16, val: u8) {
       if !self.ram_enabled { return; }
       
-      let bank = self.ram_bank % self.ram_bank_size();
+      let bank = if self.extended_mode { 
+        self.ram_bank
+      } else { 0 } % self.ram_bank_size();
       let addr = bank*self.ram_bank_size() + addr as usize%self.ram_bank_size();
       ram[addr] = val;
   }
