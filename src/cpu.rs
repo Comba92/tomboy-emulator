@@ -4,7 +4,7 @@ use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
 use crate::{
-	bus::{Bus, IFlags, SharedBus}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, ppu::Ppu
+	bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, ppu::Ppu
 };
 
 bitflags! {
@@ -39,11 +39,9 @@ pub struct Cpu {
 
 	dma: Dma,
 	halted: bool,
-
+	
 	pub mcycles: usize,
-
-	pub bus: SharedBus,
-	pub ppu: Ppu,
+	pub bus: Bus,
 }
 
 impl core::fmt::Debug for Cpu {
@@ -83,8 +81,6 @@ impl Dma {
 
 impl Cpu {
 	pub fn new(rom: &[u8]) -> Self {
-		let bus = Bus::new(rom);
-
 		Self {
 			a: 1,
 			f: Flags::from_bits_truncate(0xB0),
@@ -97,9 +93,8 @@ impl Cpu {
 			ime_to_set: false,
 			halted: false,
 			mcycles: 0,
-			ppu: Ppu::new(bus.clone()),
+			bus: Bus::new(rom),
 			dma: Dma::default(),
-			bus,
 		}
 	}
 
@@ -160,7 +155,7 @@ impl Cpu {
 	}
 
 	pub fn peek(&mut self, addr: u16) -> u8 {
-		self.bus.borrow().read(addr)
+		self.bus.read(addr)
 	}
 
 	pub fn read(&mut self, addr: u16) -> u8 {
@@ -176,14 +171,14 @@ impl Cpu {
 		if addr == 0xFF46 {
 			self.dma.init(val);
 		} else {
-			self.bus.borrow_mut().write(addr, val);
+			self.bus.write(addr, val);
 		}
 
 		self.tick();
 	}
 	fn dma_write(&mut self) {
 		let val = self.peek(self.dma.current());
-		self.bus.borrow_mut().write(0xFE00 + self.dma.offset, val);
+		self.bus.write(0xFE00 + self.dma.offset, val);
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -213,18 +208,13 @@ impl Cpu {
 
 	fn tick(&mut self) {
 		self.mcycles += 1;
-		for _ in 0..4 { self.ppu.tick(); }
-
-		let mut bus = self.bus.borrow_mut();
-		bus.timer.tick();
+		self.bus.tick();
 	}
 
 	pub fn step(&mut self) {
 		if self.halted {
-			let bus = self.bus.borrow();
-			let inte = bus.inte;
-			let intf = bus.intf();
-			drop(bus);
+			let inte = self.bus.inte;
+			let intf = self.bus.intf();
 
 			if !(inte & intf).is_empty() { self.halted = false; }
 			else { self.tick(); }
@@ -275,10 +265,9 @@ impl Cpu {
 	}
 
 	fn handle_interrupts(&mut self) {
-		let bus = self.bus.borrow();
-		let mut intf = bus.intf();
+		let mut intf = self.bus.intf();
 
-		let mut pending_ints = (bus.inte & intf).iter().collect::<Vec<_>>();
+		let mut pending_ints = (self.bus.inte & intf).iter().collect::<Vec<_>>();
 		pending_ints.reverse();
 
 		for int in pending_ints {
@@ -292,8 +281,7 @@ impl Cpu {
 			};
 
 			intf.remove(int);
-			bus.set_intf(intf);
-			drop(bus);
+			self.bus.set_intf(intf);
 
 			self.ime = false;
 

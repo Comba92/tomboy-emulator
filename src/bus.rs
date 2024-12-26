@@ -1,6 +1,6 @@
-use std::{cell::{Cell, RefCell}, num::Wrapping, rc::Rc};
+use std::{cell::{Cell, RefCell}, rc::Rc};
 
-use crate::{cart::Cart, joypad::Joypad, mapper::{self, Mapper}, ppu, timer::Timer};
+use crate::{cart::Cart, joypad::Joypad, mapper::{self, Mapper}, ppu::Ppu, timer::Timer};
 use bitflags::bitflags;
 
 bitflags! {
@@ -21,11 +21,8 @@ pub struct Bus {
   ram: [u8; 8*1024],
   exram: Vec<u8>,
   hram: [u8; 0x7F],
-  pub vram: [u8; 8*1024],
-  oam: [u8; 160],
-
-  pub ppu_regs: ppu::Registers,
   
+  pub ppu: Ppu,
   mapper: Box<dyn Mapper>,
   cart: Cart,
   pub timer: Timer,
@@ -69,29 +66,29 @@ pub fn send_interrupt(intf: &Cell<IFlags>, int: IFlags) {
 }
 
 impl Bus {
-  pub fn new(rom: &[u8]) -> SharedBus {
+  pub fn new(rom: &[u8]) -> Bus {
     let intf = Rc::new(Cell::new(IFlags::empty()));
     let cart = Cart::new(rom).unwrap();
 
-    let bus = Self {
+    Self {
       rom: Vec::from(rom),
       ram:   [0; 8*1024],
       exram: Vec::from([0].repeat(cart.ram_size)),
       hram: [0; 0x7F],
-      vram: [0; 8*1024],
-      oam:  [0; 160],
-
-      ppu_regs: ppu::Registers::default(),
 
       mapper: mapper::get_mapper(cart.mapper_code),
       cart,
+      ppu: Ppu::new(intf.clone()),
       timer: Timer::new(intf.clone()),
       joypad: Joypad::new(intf.clone()),
       inte: IFlags::empty(), 
       intf,
-    };
+    }
+  }
 
-    Rc::new(RefCell::new(bus))
+  pub fn tick(&mut self) {
+    for _ in 0..4 { self.ppu.tick(); }
+    self.timer.tick();
   }
 
   // TODO: return 0xff is ppu is enabled
@@ -100,13 +97,13 @@ impl Bus {
     use BusTarget::*;
     match &target {
       Rom => self.mapper.read_rom(&self.rom, addr),
-      VRam => self.vram[addr as usize],
+      VRam => self.ppu.vram[addr as usize],
       ExRam => self.mapper.read_ram(&self.exram, addr),
       WRam => self.ram[addr as usize],
-      Oam => self.oam[addr as usize],
+      Oam => self.ppu.oam[addr as usize],
       Unusable => 0,
       Joypad => self.joypad.read(),
-      Ppu => self.ppu_regs.read(addr),
+      Ppu => self.ppu.read(addr),
       Timer => self.timer.read_reg(addr),
       IF => self.intf.get().bits(),
       HRam => self.hram[addr as usize],
@@ -120,13 +117,13 @@ impl Bus {
     use BusTarget::*;
     match &target {
       Rom => self.mapper.write_rom(&mut self.rom, addr, val),
-      VRam => self.vram[addr as usize] = val,
+      VRam => self.ppu.vram[addr as usize] = val,
       ExRam => self.mapper.write_ram(&mut self.exram, addr, val),
       WRam => self.ram[addr as usize] = val,
-      Oam => self.oam[addr as usize] = val,
+      Oam => self.ppu.oam[addr as usize] = val,
       Unusable => {}
       Joypad => self.joypad.write(val),
-      Ppu => self.ppu_regs.write(addr, val),
+      Ppu => self.ppu.write(addr, val),
       Timer => self.timer.write_reg(addr, val),
       IF => self.intf.set(IFlags::from_bits_truncate(val)),
       HRam => self.hram[addr as usize] = val,

@@ -1,6 +1,8 @@
 use core::{cmp, hash, str};
 use std::{collections::HashMap, sync::LazyLock};
 
+// TODO: eventually merge cart and mapper
+
 #[allow(unused)]
 #[derive(Debug)]
 pub struct Cart {

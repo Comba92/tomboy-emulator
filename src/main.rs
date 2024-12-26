@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let mut events = sdl.event_pump()?;
 
-  let rom = fs::read("./tests/roms/dmg-acid2.gb")?;
+  let rom = fs::read("./tests/roms/01-special.gb")?;
   // let rom = fs::read("./roms/Tetris.gb")?;
   // let rom = fs::read("./bootroms/dmg_boot.bin")?;
   
