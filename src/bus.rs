@@ -97,10 +97,10 @@ impl Bus {
     use BusTarget::*;
     match &target {
       Rom => self.mapper.read_rom(&self.rom, addr),
-      VRam => self.ppu.vram[addr as usize],
+      VRam => if self.ppu.is_vram_enabled() { self.ppu.vram[addr as usize] } else { 0xFF }
       ExRam => self.mapper.read_ram(&self.exram, addr),
       WRam => self.ram[addr as usize],
-      Oam => self.ppu.oam[addr as usize],
+      Oam => if self.ppu.is_oam_enabled() { self.ppu.oam[addr as usize] } else { 0xFF }
       Unusable => 0,
       Joypad => self.joypad.read(),
       Ppu => self.ppu.read(addr),

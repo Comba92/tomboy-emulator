@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
   let mut events = sdl.event_pump()?;
 
-  let rom = fs::read("./tests/roms/01-special.gb")?;
+  let rom = fs::read("./tests/roms/dmg-acid2.gb")?;
   // let rom = fs::read("./roms/Tetris.gb")?;
   // let rom = fs::read("./bootroms/dmg_boot.bin")?;
   
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
   'running: loop {
     let ms_since_frame_start = time::Instant::now();
 
-    while emu.ppu.vblank.take().is_none() {
+    while emu.bus.ppu.vblank.take().is_none() {
       emu.step();
     }
 
@@ -47,14 +47,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         Event::KeyDown { keycode, .. } => {
           if let Some(keycode) = keycode {
             match keycode {
-              Keycode::Up => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::select_up); }
-              Keycode::Down => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::start_down); }
-              Keycode::Left => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::b_left ); }
-              Keycode::Right => { emu.bus.borrow_mut().joypad.dpad_pressed(joypad::Flags::a_right ); }
-              Keycode::Z => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::a_right ); }
-              Keycode::X => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::b_left); }
-              Keycode::M => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::start_down); }
-              Keycode::N => { emu.bus.borrow_mut().joypad.button_pressed(joypad::Flags::select_up); }
+              Keycode::Up => { emu.bus.joypad.dpad_pressed(joypad::Flags::select_up); }
+              Keycode::Down => { emu.bus.joypad.dpad_pressed(joypad::Flags::start_down); }
+              Keycode::Left => { emu.bus.joypad.dpad_pressed(joypad::Flags::b_left ); }
+              Keycode::Right => { emu.bus.joypad.dpad_pressed(joypad::Flags::a_right ); }
+              Keycode::Z => { emu.bus.joypad.button_pressed(joypad::Flags::a_right ); }
+              Keycode::X => { emu.bus.joypad.button_pressed(joypad::Flags::b_left); }
+              Keycode::M => { emu.bus.joypad.button_pressed(joypad::Flags::start_down); }
+              Keycode::N => { emu.bus.joypad.button_pressed(joypad::Flags::select_up); }
               _ => {}
             }
           }
@@ -62,14 +62,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         Event::KeyUp { keycode, .. } => {
           if let Some(keycode) = keycode {
             match keycode {
-              Keycode::Up => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::select_up); }
-              Keycode::Down => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::start_down); }
-              Keycode::Left => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::b_left ); }
-              Keycode::Right => { emu.bus.borrow_mut().joypad.dpad_released(joypad::Flags::a_right ); }
-              Keycode::Z => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::a_right ); }
-              Keycode::X => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::b_left); }
-              Keycode::M => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::start_down); }
-              Keycode::N => { emu.bus.borrow_mut().joypad.button_released(joypad::Flags::select_up); }
+              Keycode::Up => { emu.bus.joypad.dpad_released(joypad::Flags::select_up); }
+              Keycode::Down => { emu.bus.joypad.dpad_released(joypad::Flags::start_down); }
+              Keycode::Left => { emu.bus.joypad.dpad_released(joypad::Flags::b_left ); }
+              Keycode::Right => { emu.bus.joypad.dpad_released(joypad::Flags::a_right ); }
+              Keycode::Z => { emu.bus.joypad.button_released(joypad::Flags::a_right ); }
+              Keycode::X => { emu.bus.joypad.button_released(joypad::Flags::b_left); }
+              Keycode::M => { emu.bus.joypad.button_released(joypad::Flags::start_down); }
+              Keycode::N => { emu.bus.joypad.button_released(joypad::Flags::select_up); }
               _ => {}
             }
           }
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     
     canvas.clear();
-    texture.update(None, &emu.ppu.lcd.buffer, emu.ppu.lcd.pitch())?;
+    texture.update(None, &emu.bus.ppu.lcd.buffer, emu.bus.ppu.lcd.pitch())?;
     canvas.copy(&texture, None, None)?;
     canvas.present();
 

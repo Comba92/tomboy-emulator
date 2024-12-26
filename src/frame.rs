@@ -19,7 +19,7 @@ impl FrameBuffer {
   }
 
   pub fn gameboy_lcd() -> Self {
-    Self::new(32*8, 32*8)
+    Self::new(160, 144)
   }
 
   pub fn pitch(&self) -> usize {
