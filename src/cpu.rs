@@ -4,7 +4,7 @@ use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
 use crate::{
-	bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, ppu::Ppu
+	bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, lsb, msb, ppu::Ppu
 };
 
 bitflags! {
@@ -737,22 +737,23 @@ impl Cpu {
 	}
 
 	fn rlca(&mut self) {
-		self.shift_acc(|val| val.rotate_left(1), |val| val & 0x80 != 0);
+		self.shift_acc(|val| val.rotate_left(1), msb);
 	}
 
 	fn rrca(&mut self) {
-		self.shift_acc(|val| val.rotate_right(1), |val| val & 1 != 0);
+		self.shift_acc(|val| val.rotate_right(1), lsb);
 	}
 
 	fn rla(&mut self) {
 		let carry = self.f.contains(Flags::c) as u8;
-		self.shift_acc(|val| val.shl(1) | carry, |val| val & 0x80 != 0);
+		self.shift_acc(|val| val.shl(1) | carry, msb);
 	}
 
 	fn rra(&mut self) {
 		let carry = self.f.contains(Flags::c) as u8;
-		self.shift_acc(|val| (carry << 7) | val.shr(1), |val| val & 1 != 0);
+		self.shift_acc(|val| (carry << 7) | val.shr(1), lsb);
 	}
+
 
 	fn shift<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, ops: &[InstrTarget], f: FS, carry: FB) {
 		let val = self.get_operand(&ops[0]);
@@ -767,33 +768,33 @@ impl Cpu {
 	}
 
 	fn rlc(&mut self, ops: &[InstrTarget]) {
-		self.shift(ops, |val| val.rotate_left(1), |val| val & 0x80 != 0);
+		self.shift(ops, |val| val.rotate_left(1), msb);
 	}
 
 	fn rrc(&mut self, ops: &[InstrTarget]) {
-		self.shift(ops, |val| val.rotate_right(1), |val| val & 1 != 0);
+		self.shift(ops, |val| val.rotate_right(1), lsb);
 	}
 
 	fn rl(&mut self, ops: &[InstrTarget]) {
 		let carry = self.f.contains(Flags::c) as u8;
-		self.shift(ops, |val| val.shl(1) | carry, |val| val & 0x80 != 0);
+		self.shift(ops, |val| val.shl(1) | carry, msb);
 	}
 
 	fn rr(&mut self, ops: &[InstrTarget]) {
 		let carry = self.f.contains(Flags::c) as u8;
-		self.shift(ops, |val| (carry << 7) | val.shr(1), |val| val & 1 != 0);
+		self.shift(ops, |val| (carry << 7) | val.shr(1), lsb);
 	}
 
 	fn sla(&mut self, ops: &[InstrTarget]) {
-		self.shift(ops, |val| val.shl(1), |val| val & 0x80 != 0);
+		self.shift(ops, |val| val.shl(1), msb);
 	}
 
 	fn sra(&mut self, ops: &[InstrTarget]) {
-		self.shift(ops, |val| (val & 0b1000_0000) | val.shr(1), |val| val & 1 != 0);
+		self.shift(ops, |val| (val & 0b1000_0000) | val.shr(1), lsb);
 	}
 
 	fn srl(&mut self, ops: &[InstrTarget]) {
-		self.shift(ops, |val| val.shr(1), |val| val & 1 != 0);
+		self.shift(ops, |val| val.shr(1), lsb);
 	}
 
 	fn swap(&mut self, ops: &[InstrTarget]) {

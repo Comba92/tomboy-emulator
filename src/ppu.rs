@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{bus::{self, InterruptFlags}, frame::FrameBuffer};
+use crate::{bus::{self, InterruptFlags}, frame::FrameBuffer, nth_bit};
 use bitflags::bitflags;
 
 bitflags! {
@@ -49,10 +49,11 @@ enum RenderState {
   #[default] Tile, DataLow, DataHigh, Sleep
 }
 
-#[derive(Default)]
 struct Fetcher {
   state: RenderState,
+  obj_visible: Vec<OamObject>,
   bg_fifo: VecDeque<u8>,
+  obj_scanline: [Option<ObjFifoEntry>; 160],
   should_do_step: bool,
   x: u8,
   pixel_x: u8,
@@ -64,14 +65,55 @@ struct Fetcher {
   tile_lo: u8,
   tile_hi: u8,
 }
+
+impl Default for Fetcher {
+  fn default() -> Self {
+    Self { state: Default::default(), obj_visible: Default::default(), bg_fifo: Default::default(), obj_scanline: [const {None}; 160], should_do_step: Default::default(), x: Default::default(), pixel_x: Default::default(), scroll_x: Default::default(), tile_y: Default::default(), tileset_id: Default::default(), tileset_addr: Default::default(), tile_lo: Default::default(), tile_hi: Default::default() }
+  }
+}
+
 impl Fetcher {
   pub fn reset(&mut self) {
     self.bg_fifo.clear();
+    self.obj_scanline.fill(None);
     self.x = 0;
     self.pixel_x = 0;
     self.scroll_x = 0;
     self.should_do_step = false;
     self.state = RenderState::Tile;
+  }
+}
+
+#[derive(Default, Clone)]
+struct ObjFifoEntry {
+  color: u8,
+  palette: bool,
+  priority: bool,
+}
+struct OamObject {
+  i: u8,
+  y: u8,
+  x: u8,
+  tile_id: u8,
+  priority: bool,
+  x_flip: bool,
+  y_flip: bool,
+  dmg_palette: bool,
+}
+impl OamObject {
+  pub fn new(bytes: &[u8], i: u8) -> Self {
+    let y = bytes[0];
+    let x = bytes[1];
+    let tile_id = bytes[2];
+    let attr = bytes[3];
+    let priority = !nth_bit(attr, 7);
+    let y_flip = nth_bit(attr, 6);
+    let x_flip = nth_bit(attr, 5);
+    let dmg_palette = nth_bit(attr, 4);
+
+    Self {
+      i, y, x, tile_id, priority, y_flip, x_flip, dmg_palette
+    }
   }
 }
 
@@ -148,9 +190,12 @@ impl Ppu {
     match self.mode {
       OamScan => {
         if self.tcycles >= 80 {
+          // we do this in one go
+          self.oam_scan();
+          self.fill_obj_scanline();
+
           self.mode = DrawingPixels;
           self.vram_enabled = false;
-          self.fetcher.reset();
         }
       }
       DrawingPixels => {
@@ -158,10 +203,11 @@ impl Ppu {
           self.mode = Hblank;
           self.oam_enabled = true;
           self.vram_enabled = true;
-
+          self.fetcher.reset();
+          
           self.send_lcd_int(Stat::mode0_int);
         } else {
-          self.bg_step();
+          self.fetcher_step();
         }
       }
       Hblank => {
@@ -190,7 +236,7 @@ impl Ppu {
   }
 
   fn ly_inc(&mut self) {
-    if self.is_wnd_visible() {
+    if self.is_inside_wnd() {
       self.wnd_line += 1;
     }
     self.ly += 1;
@@ -271,7 +317,7 @@ impl Ppu {
 
   fn is_inside_wnd(&self) -> bool {
     self.ly >= self.wy
-    && self.fetcher.x >= self.wx/8
+    && self.fetcher.x >= self.wx.saturating_sub(7)/8
     && self.ctrl.contains(Ctrl::wnd_enabled) 
   }
 
@@ -319,33 +365,108 @@ impl Ppu {
     (obj_palette >> (colord_id*2)) & 0b11
   }
 
-  fn oam_scan(&mut self) {
-
+  fn obj_size(&self) -> u8 {
+    match self.ctrl.contains(Ctrl::obj_size) {
+      false => 8,
+      true  => 16,
+    }
   }
 
-  fn bg_step(&mut self) {
-    if self.fetcher.should_do_step {
+  fn oam_scan(&mut self) {
+    self.fetcher.obj_visible.clear(); 
+
+    for i in (0..160).step_by(4) {
+      let y = self.oam[i];
+
+      if self.ly.wrapping_add(16) >= y
+      && self.ly.wrapping_add(16) < y.wrapping_add(self.obj_size())
+      {
+        let obj = OamObject::new(&self.oam[i..i+4], i as u8/4);
+        self.fetcher.obj_visible.push(obj);
+      }
+
+      if self.fetcher.obj_visible.len() >= 10 {
+        break;
+      }
+    }
+
+    // we sort them in reverse (lower to higher), so that we always set for last to the scanline the higher priority object
+    self.fetcher.obj_visible.sort_by(|a, b| {
+      if a.x == b.x { b.i.cmp(&a.i) } else { b.x.cmp(&a.x) } 
+    });
+  }
+
+  fn fill_obj_scanline(&mut self) {
+    for obj in &self.fetcher.obj_visible {
+      if obj.x >= 8 && obj.x < 168 {
+        let y = obj.y.saturating_sub(16);
+        let row = self.ly.abs_diff(y);
+        
+        let tile_id = if self.ctrl.contains(Ctrl::obj_size) {
+          match obj.y_flip {
+            false => if row >= 8 { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
+            true  => if row >= 8 { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
+          }
+        } else { obj.tile_id };
+
+        let y_offset = if obj.y_flip {
+          row.abs_diff(7)
+        } else { row };
+
+        let tileset_addr = VRAM0 
+          + 16*tile_id as u16
+          + 2*y_offset as u16;
+
+        let mut tile_lo = self.vram_read(tileset_addr);
+        let mut tile_hi = self.vram_read(tileset_addr+1);
+
+        if !obj.x_flip {
+          tile_lo = tile_lo.reverse_bits();
+          tile_hi = tile_hi.reverse_bits();
+        }
+
+        for i in 0..8 {
+          let x = obj.x.saturating_sub(8) + i;
+          if x >= 160 { break; }
+
+          let pixel_lo = (tile_lo >> i) & 1;
+          let pixel_hi = (tile_hi >> i) & 1;
+          let color = (pixel_hi << 1) | pixel_lo;
+
+          let data = ObjFifoEntry { 
+            color,
+            palette: obj.dmg_palette,
+            priority: obj.priority
+          };
+
+          self.fetcher.obj_scanline[x as usize] = Some(data);
+        }
+      }
+    }
+  }
+
+  fn fetcher_step(&mut self) {
+    if self.fetcher.should_do_step && self.is_ppu_enabled() {
       match self.fetcher.state {
         RenderState::Tile => {
-          let (x, y, tilemap) = 
+          let (y, tilemap_id) =
           if self.is_inside_wnd() {
             let tilemap = self.wnd_tilemap();
-            let x = (self.fetcher.x*8).wrapping_add(7).wrapping_sub(self.wx)/8;
+            let x = (self.fetcher.x + self.wx.saturating_sub(7)/8) & 31;
             let y = self.wnd_line;
+            let tilemap_id = tilemap + 32 * (y/8) as u16 + x as u16;
 
-            (x, y, tilemap)
+            (y, tilemap_id)
           } else {
             let tilemap = self.bg_tilemap();
             let y = self.ly.wrapping_add(self.scy);
             let x = (self.fetcher.x + self.scx/8) & 31;
+            let tilemap_id = tilemap + 32 * (y/8) as u16 + x as u16;
 
-            (x, y, tilemap)
+            (y, tilemap_id)
           };
 
           self.fetcher.x += 1;
-          
-          let tilemap_id = tilemap + 32 * (y/8) as u16 + x as u16;
-
           self.fetcher.tile_y = y;
           self.fetcher.tileset_id = self.vram_read(tilemap_id);
           self.fetcher.state = RenderState::DataLow;
@@ -355,7 +476,6 @@ impl Ppu {
           self.fetcher.tileset_addr = tile_start + 2*(self.fetcher.tile_y % 8) as u16;
 
           self.fetcher.tile_lo = self.vram_read(self.fetcher.tileset_addr);
-
           self.fetcher.state = RenderState::DataHigh;
         }
         RenderState::DataHigh => {
@@ -381,15 +501,36 @@ impl Ppu {
   }
 
   fn push_pixel(&mut self) {
+    if !self.is_ppu_enabled() {
+      self.lcd.set_pixel(self.fetcher.pixel_x as usize, self.ly as usize, self.bg_palette(0));
+      self.fetcher.pixel_x += 1;
+      return;
+    }
+
+    // we always have at least 8 pixels ready
     if self.fetcher.bg_fifo.is_empty() { return; }
 
-    let pixel = self.fetcher.bg_fifo.pop_front().unwrap();
+    // we should pop discarding the scrolling pixels
+    let bg_color = self.fetcher.bg_fifo.pop_front().unwrap();
     if self.fetcher.scroll_x < self.scx % 8 {
       self.fetcher.scroll_x += 1;
       return;
     }
 
-    self.lcd.set_pixel(self.fetcher.pixel_x as usize, self.ly as usize, pixel);
+    let obj = &self.fetcher.obj_scanline[self.fetcher.pixel_x as usize]
+      .take().unwrap_or_default();
+
+    let color = if self.ctrl.contains(Ctrl::obj_enabled) 
+      && obj.color != 0 && (obj.priority || bg_color == 0)
+    {
+      self.obj_palette(obj.palette, obj.color)
+    } else if self.ctrl.contains(Ctrl::bg_wnd_enabled) {
+      self.bg_palette(bg_color)
+    } else {
+      self.bg_palette(0)
+    };
+
+    self.lcd.set_pixel(self.fetcher.pixel_x as usize, self.ly as usize, color);
     self.fetcher.pixel_x += 1;
   }
 }
