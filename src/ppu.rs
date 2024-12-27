@@ -45,17 +45,19 @@ enum PpuMode {
 }
 
 #[derive(Default)]
-enum RenderState {
-  #[default] Tile, DataLow, DataHigh, Sleep
+enum FetcherState {
+  #[default] Tile, DataLow, DataHigh, Sleep, Push
 }
 
 struct Fetcher {
-  state: RenderState,
+  state: FetcherState,
   obj_visible: Vec<OamObject>,
   bg_fifo: VecDeque<u8>,
   obj_scanline: [Option<ObjFifoEntry>; 160],
   should_do_step: bool,
-  x: u8,
+  bg_x: u8,
+  wnd_x: u8,
+  wnd_hit: bool,
   pixel_x: u8,
   scroll_x: u8,
   
@@ -68,19 +70,20 @@ struct Fetcher {
 
 impl Default for Fetcher {
   fn default() -> Self {
-    Self { state: Default::default(), obj_visible: Default::default(), bg_fifo: Default::default(), obj_scanline: [const {None}; 160], should_do_step: Default::default(), x: Default::default(), pixel_x: Default::default(), scroll_x: Default::default(), tile_y: Default::default(), tileset_id: Default::default(), tileset_addr: Default::default(), tile_lo: Default::default(), tile_hi: Default::default() }
+    Self { state: Default::default(), obj_visible: Default::default(), bg_fifo: Default::default(), obj_scanline: [const {None}; 160], should_do_step: Default::default(), bg_x: Default::default(), wnd_x: Default::default(), wnd_hit: Default::default(), pixel_x: Default::default(), scroll_x: Default::default(), tile_y: Default::default(), tileset_id: Default::default(), tileset_addr: Default::default(), tile_lo: Default::default(), tile_hi: Default::default() }
   }
 }
 
 impl Fetcher {
   pub fn reset(&mut self) {
     self.bg_fifo.clear();
-    self.obj_scanline.fill(None);
-    self.x = 0;
+    self.bg_x = 0;
+    self.wnd_x = 0;
+    self.wnd_hit = false;
     self.pixel_x = 0;
     self.scroll_x = 0;
     self.should_do_step = false;
-    self.state = RenderState::Tile;
+    self.state = FetcherState::Tile;
   }
 }
 
@@ -133,6 +136,7 @@ pub struct Ppu {
   oam_enabled: bool,
   ly: u8,
   wnd_line: u8,
+  wnd_hit: bool,
   lyc: u8,
   scy: u8,
   scx: u8,
@@ -164,6 +168,7 @@ impl Ppu {
       oam_enabled: false,
       ly: 0,
       wnd_line: 0,
+      wnd_hit: false,
       lyc: 0,
       scy: 0,
       scx: 0,
@@ -204,6 +209,7 @@ impl Ppu {
           self.oam_enabled = true;
           self.vram_enabled = true;
           self.fetcher.reset();
+          self.wnd_hit = false;
           
           self.send_lcd_int(Stat::mode0_int);
         } else {
@@ -236,7 +242,10 @@ impl Ppu {
   }
 
   fn ly_inc(&mut self) {
-    if self.is_inside_wnd() {
+    // wnd_line is only incremented when window is VISIBLE
+    if self.ly >= self.wy
+    && self.wx >= 7 && self.wx < 166
+    {
       self.wnd_line += 1;
     }
     self.ly += 1;
@@ -288,10 +297,6 @@ impl Ppu {
     self.vram[(addr - VRAM0) as usize]
   }
 
-  fn vram_write(&mut self, addr: u16, val: u8) {
-    self.vram[(addr - VRAM0) as usize] = val;
-  }
-
   fn send_vblank_int(&mut self) {
     bus::send_interrupt(&self.intf, bus::IFlags::vblank);
     self.vblank = Some(());
@@ -313,18 +318,6 @@ impl Ppu {
 
   pub fn is_oam_enabled(&self) -> bool {
     self.is_ppu_enabled() && self.oam_enabled
-  }
-
-  fn is_inside_wnd(&self) -> bool {
-    self.ly >= self.wy
-    && self.fetcher.x >= self.wx.saturating_sub(7)/8
-    && self.ctrl.contains(Ctrl::wnd_enabled) 
-  }
-
-  fn is_wnd_visible(&self) -> bool {
-    self.ctrl.contains(Ctrl::wnd_enabled)
-    && (0..=166).contains(&self.wx)
-    && (0..=143).contains(&self.wy)
   }
 
   pub fn tileset_addr(&self, tileset_id: u8) -> u16 {
@@ -397,6 +390,8 @@ impl Ppu {
   }
 
   fn fill_obj_scanline(&mut self) {
+    self.fetcher.obj_scanline.fill(None);
+
     for obj in &self.fetcher.obj_visible {
       if obj.x >= 8 && obj.x < 168 {
         let y = obj.y.saturating_sub(16);
@@ -448,50 +443,58 @@ impl Ppu {
   fn fetcher_step(&mut self) {
     if self.fetcher.should_do_step && self.is_ppu_enabled() {
       match self.fetcher.state {
-        RenderState::Tile => {
+        FetcherState::Tile => {
           let (y, tilemap_id) =
-          if self.is_inside_wnd() {
+          if self.wnd_hit
+          {
             let tilemap = self.wnd_tilemap();
-            let x = (self.fetcher.x + self.wx.saturating_sub(7)/8) & 31;
+            let x = self.fetcher.wnd_x & 31;
             let y = self.wnd_line;
             let tilemap_id = tilemap + 32 * (y/8) as u16 + x as u16;
+            self.fetcher.wnd_x += 1;
 
             (y, tilemap_id)
           } else {
             let tilemap = self.bg_tilemap();
             let y = self.ly.wrapping_add(self.scy);
-            let x = (self.fetcher.x + self.scx/8) & 31;
+            let x = (self.fetcher.bg_x + self.scx/8) & 31;
             let tilemap_id = tilemap + 32 * (y/8) as u16 + x as u16;
+            self.fetcher.bg_x += 1;
 
             (y, tilemap_id)
           };
 
-          self.fetcher.x += 1;
           self.fetcher.tile_y = y;
           self.fetcher.tileset_id = self.vram_read(tilemap_id);
-          self.fetcher.state = RenderState::DataLow;
+          self.fetcher.state = FetcherState::DataLow;
         }
-        RenderState::DataLow => {
+        FetcherState::DataLow => {
           let tile_start = self.tileset_addr(self.fetcher.tileset_id);
           self.fetcher.tileset_addr = tile_start + 2*(self.fetcher.tile_y % 8) as u16;
 
           self.fetcher.tile_lo = self.vram_read(self.fetcher.tileset_addr);
-          self.fetcher.state = RenderState::DataHigh;
+          self.fetcher.state = FetcherState::DataHigh;
         }
-        RenderState::DataHigh => {
+        FetcherState::DataHigh => {
           self.fetcher.tile_hi = self.vram_read(self.fetcher.tileset_addr+1);
-
-          for bit in 0..8 {
-            let lo = (self.fetcher.tile_lo >> bit) & 1;
-            let hi = (self.fetcher.tile_hi >> bit) & 1;
-            let pixel = (hi << 1) | lo;
-            self.fetcher.bg_fifo.push_front(pixel);
-          }
-
-          self.fetcher.state = RenderState::Sleep;
+          self.fetcher.state = FetcherState::Push;
         }
-        RenderState::Sleep => {
-          self.fetcher.state = RenderState::Tile;
+        FetcherState::Sleep => {
+          self.fetcher.state = FetcherState::Push;
+        }
+        FetcherState::Push => {
+          if self.fetcher.bg_fifo.is_empty() {
+            for bit in 0..8 {
+              let lo = (self.fetcher.tile_lo >> bit) & 1;
+              let hi = (self.fetcher.tile_hi >> bit) & 1;
+              let pixel = (hi << 1) | lo;
+              self.fetcher.bg_fifo.push_front(pixel);
+            }
+
+            self.fetcher.state = FetcherState::Tile;
+          } else {
+            self.fetcher.should_do_step = false;
+          }
         }
       }
     }
@@ -532,5 +535,14 @@ impl Ppu {
 
     self.lcd.set_pixel(self.fetcher.pixel_x as usize, self.ly as usize, color);
     self.fetcher.pixel_x += 1;
+
+    if !self.wnd_hit && self.ctrl.contains(Ctrl::wnd_enabled) 
+      && self.fetcher.pixel_x + 7 >= self.wx
+      && self.ly >= self.wy
+    {
+      self.wnd_hit = true;
+      self.fetcher.bg_fifo.clear();
+      self.fetcher.state = FetcherState::Tile;
+    }
   }
 }
