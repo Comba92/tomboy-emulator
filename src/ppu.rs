@@ -205,12 +205,12 @@ impl Ppu {
       }
       DrawingPixels => {
         if self.fetcher.pixel_x >= 160 {
-          self.mode = Hblank;
           self.oam_enabled = true;
           self.vram_enabled = true;
           self.fetcher.reset();
           self.wnd_hit = false;
           
+          self.mode = Hblank;
           self.send_lcd_int(Stat::mode0_int);
         } else {
           self.fetcher_step();
@@ -219,23 +219,24 @@ impl Ppu {
       Hblank => {
         if self.tcycles >= 456 {
           if self.ly >= 143 {
+            
             self.mode = Vblank;
-
             self.send_vblank_int();
             self.send_lcd_int(Stat::mode1_int);
           } else {
             self.mode = OamScan;
+            self.send_lcd_int(Stat::mode2_int);
           };
         }
       }
       Vblank => {
         if self.ly >= 154 {
           self.mode = OamScan;
+          self.send_lcd_int(Stat::mode2_int);
           self.oam_enabled = false;
 
           self.ly = 0;
           self.wnd_line = 0;
-          self.send_lcd_int(Stat::mode2_int);
         }
       }
     };
@@ -370,7 +371,7 @@ impl Ppu {
         self.fetcher.obj_visible.push(obj);
       }
 
-      if self.fetcher.obj_visible.len() > 10 { break; }
+      if self.fetcher.obj_visible.len() >= 10 { break; }
     }
 
     // we sort them in reverse (lower to higher), so that we always set for last to the scanline the higher priority object

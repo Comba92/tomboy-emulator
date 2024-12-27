@@ -16,7 +16,7 @@ enum JoypadSelect { None, Dpad, Buttons, Both }
 pub struct Joypad {
   selected: JoypadSelect,
   buttons: Flags,
-  dpad: Flags,
+  dpad:    Flags,
   intf: bus::InterruptFlags,
 }
 
@@ -31,9 +31,11 @@ impl Joypad {
   }
 
   pub fn button_pressed(&mut self, button: Flags) {
-    if self.buttons.is_empty() {
+    // if self.buttons.is_empty() {
+    if self.selected == JoypadSelect::Buttons {
       bus::send_interrupt(&self.intf, bus::IFlags::joypad);
     }
+    // }
     self.buttons.remove(button);
   }
 
@@ -42,9 +44,11 @@ impl Joypad {
   }
 
   pub fn dpad_pressed(&mut self, button: Flags) {
-    if self.dpad.is_empty() {
+    // if self.dpad.is_empty() {
+    if self.selected == JoypadSelect::Dpad {
       bus::send_interrupt(&self.intf, bus::IFlags::joypad);
     }
+    // }
     self.dpad.remove(button);
   }
 
@@ -54,19 +58,19 @@ impl Joypad {
 
   pub fn read(&self) -> u8 {
     match self.selected {
-      JoypadSelect::Both => 0xFF,
+      JoypadSelect::Both => 0x0000,
       JoypadSelect::Dpad => self.dpad.bits() & 0b1111,
       JoypadSelect::Buttons => self.buttons.bits() & 0b1111,
-      _ => 0x00,
+      _ => 0xF,
     }
   }
 
   pub fn write(&mut self, val: u8) {
     self.selected = match (val >> 4) & 0b11 {
-      0b00 => JoypadSelect::Both,
+      0b00 => JoypadSelect::None,
       0b01 => JoypadSelect::Buttons,
       0b10 => JoypadSelect::Dpad,
-      _ => JoypadSelect::None,
+      _ => JoypadSelect::Both,
     };
   }
 }

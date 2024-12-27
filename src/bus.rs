@@ -1,6 +1,6 @@
 use std::{cell::{Cell, RefCell}, rc::Rc};
 
-use crate::{cart::Cart, joypad::Joypad, mapper::{self, Mapper}, ppu::Ppu, timer::Timer};
+use crate::{apu::Apu, cart::Cart, joypad::Joypad, mapper::{self, Mapper}, ppu::Ppu, timer::Timer};
 use bitflags::bitflags;
 
 bitflags! {
@@ -28,15 +28,15 @@ pub struct Bus {
   cart: Cart,
   pub timer: Timer,
   pub joypad: Joypad,
+  pub apu: Apu,
 
   pub inte: IFlags,
   pub intf: InterruptFlags,
 }
 
-
 enum BusTarget {
   Rom, VRam, ExRam, WRam, Oam, Unusable, 
-  Joypad, Ppu, Timer, NoImpl, HRam, IF, IE,
+  Joypad, Ppu, Apu, Timer, NoImpl, HRam, IF, IE,
 }
 
 #[allow(unused)]
@@ -53,6 +53,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
     0xFF00 => (Joypad, addr),
     0xFF04..=0xFF07 => (Timer, addr),
     0xFF0F => (IF, addr),
+    0xFF10..=0xFF3F => (Apu, addr),
     0xFF40..=0xFF4B => (Ppu, addr),
     0xFF01..=0xFF7F => (NoImpl, addr),
     0xFF80..=0xFFFE => (HRam, addr - 0xFF80),
@@ -73,13 +74,14 @@ impl Bus {
 
     Self {
       rom: Vec::from(rom),
-      ram:   [0; 8*1024],
+      ram: [0; 8*1024],
       exram: Vec::from([0].repeat(cart.ram_size)),
       hram: [0; 0x7F],
 
       mapper: mapper::get_mapper(cart.mapper_code),
       cart,
       ppu: Ppu::new(intf.clone()),
+      apu: Apu::default(),
       timer: Timer::new(intf.clone()),
       joypad: Joypad::new(intf.clone()),
       inte: IFlags::empty(), 
@@ -92,8 +94,7 @@ impl Bus {
     self.timer.tick();
   }
 
-  // TODO: return 0xff is ppu is enabled
-  pub fn read(&self, addr: u16) -> u8 {
+  pub fn read(&mut self, addr: u16) -> u8 {
     let (target, addr) = map_addr(addr);
     use BusTarget::*;
     match &target {
@@ -104,6 +105,7 @@ impl Bus {
       Oam => self.ppu.oam[addr as usize],
       Unusable => 0,
       Joypad => self.joypad.read(),
+      Apu => self.apu.read(addr),
       Ppu => self.ppu.read(addr),
       Timer => self.timer.read_reg(addr),
       IF => self.intf.get().bits(),
@@ -124,6 +126,7 @@ impl Bus {
       Oam => self.ppu.oam[addr as usize] = val,
       Unusable => {}
       Joypad => self.joypad.write(val),
+      Apu => self.apu.write(addr, val),
       Ppu => self.ppu.write(addr, val),
       Timer => self.timer.write_reg(addr, val),
       IF => self.intf.set(IFlags::from_bits_truncate(val)),

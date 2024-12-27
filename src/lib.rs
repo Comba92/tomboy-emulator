@@ -5,7 +5,7 @@ pub mod bus;
 
 pub mod timer;
 pub mod joypad;
-
+pub mod apu;
 
 pub mod ppu;
 pub mod frame;
