@@ -397,6 +397,7 @@ impl Ppu {
         let y = obj.y.saturating_sub(16);
         let row = self.ly.abs_diff(y);
         
+        // Sprite 8x16 tile handling
         let tile_id = if self.ctrl.contains(Ctrl::obj_size) {
           match obj.y_flip {
             false => if row >= 8 { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
@@ -404,6 +405,7 @@ impl Ppu {
           }
         } else { obj.tile_id };
 
+        // Y flipping (simply reverse the y offset)
         let y_offset = if obj.y_flip {
           row.abs_diff(7)
         } else { row };
@@ -415,11 +417,13 @@ impl Ppu {
         let mut tile_lo = self.vram_read(tileset_addr);
         let mut tile_hi = self.vram_read(tileset_addr+1);
 
+        // X flipping (reverse the bits, knowing that they are reversed without flipping)
         if !obj.x_flip {
           tile_lo = tile_lo.reverse_bits();
           tile_hi = tile_hi.reverse_bits();
         }
 
+        // push each pixel
         for i in 0..8 {
           let x = obj.x.saturating_sub(8) + i;
           if x >= 160 { break; }
@@ -427,6 +431,7 @@ impl Ppu {
           let pixel_lo = (tile_lo >> i) & 1;
           let pixel_hi = (tile_hi >> i) & 1;
           let color = (pixel_hi << 1) | pixel_lo;
+          if color == 0 { continue; }
 
           let data = ObjFifoEntry { 
             color,
