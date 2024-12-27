@@ -1,6 +1,6 @@
 use core::{cmp, hash, str};
-use std::collections::HashMap;
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct Cart {
     pub cart_type: &'static str,
@@ -109,7 +109,7 @@ impl Cart {
             return Err("Invalid checksum");
         }
 
-        Ok(Self {
+        let header = Self {
             title,
             mapper_code,
             cgb_mode,
@@ -122,7 +122,10 @@ impl Cart {
             ram_size,
             version,
             checksum,
-        })
+        };
+
+        println!("{:#?}", header);
+        Ok(header)
     }
 }
 

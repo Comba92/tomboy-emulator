@@ -1,7 +1,7 @@
 use std::{error::Error, fs, time};
 
 use sdl2::{event::Event, keyboard::Keycode, pixels::PixelFormatEnum};
-use tomboy_emulator::{cart::Cart, cpu::Cpu, joypad};
+use tomboy_emulator::{cpu::Cpu, joypad};
 
 fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
@@ -19,16 +19,12 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut events = sdl.event_pump()?;
 
   let rom = fs::read("./tests/roms/dmg-acid2.gb")?;
-  // let rom = fs::read("./roms/Tetris.gb")?;
-  // let rom = fs::read("./bootroms/dmg_boot.bin")?;
-  
   let mut emu = Cpu::new(&rom);
 
   let texture_creator = canvas.texture_creator();
   let mut texture = texture_creator
     .create_texture_target(PixelFormatEnum::RGBA32, WIN_WIDTH, WIN_HEIGHT)?;
 
-  // let mut framebuf = FrameBuffer::new(WIN_WIDTH as usize, WIN_HEIGHT as usize);
 
   'running: loop {
     let ms_since_frame_start = time::Instant::now();

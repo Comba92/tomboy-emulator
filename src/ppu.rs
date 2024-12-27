@@ -28,9 +28,9 @@ bitflags! {
   }
 }
 
-const OAM: u16 = 0xFE00;
+const _OAM: u16 = 0xFE00;
 const VRAM0: u16 = 0x8000;
-const VRAM1: u16 = 0x8800;
+const _VRAM1: u16 = 0x8800;
 const VRAM2: u16 = 0x9000;
 const MAP0: u16 = 0x9800;
 const MAP1: u16 = 0x9C00; 
@@ -46,7 +46,7 @@ enum PpuMode {
 
 #[derive(Default)]
 enum FetcherState {
-  #[default] Tile, DataLow, DataHigh, Sleep, Push
+  #[default] Tile, DataLow, DataHigh, Push
 }
 
 struct Fetcher {
@@ -312,14 +312,6 @@ impl Ppu {
     self.ctrl.contains(Ctrl::lcd_enabled)
   }
 
-  pub fn is_vram_enabled(&self) -> bool {
-    self.is_ppu_enabled() && self.vram_enabled
-  }
-
-  pub fn is_oam_enabled(&self) -> bool {
-    self.is_ppu_enabled() && self.oam_enabled
-  }
-
   pub fn tileset_addr(&self, tileset_id: u8) -> u16 {
     match self.ctrl.contains(Ctrl::tileset_addr) {
       true  => VRAM0 + 16*tileset_id as u16,
@@ -378,9 +370,7 @@ impl Ppu {
         self.fetcher.obj_visible.push(obj);
       }
 
-      if self.fetcher.obj_visible.len() >= 10 {
-        break;
-      }
+      if self.fetcher.obj_visible.len() > 10 { break; }
     }
 
     // we sort them in reverse (lower to higher), so that we always set for last to the scanline the higher priority object
@@ -390,6 +380,7 @@ impl Ppu {
   }
 
   fn fill_obj_scanline(&mut self) {
+    if !self.ctrl.contains(Ctrl::obj_enabled) { return; }
     self.fetcher.obj_scanline.fill(None);
 
     for obj in &self.fetcher.obj_visible {
@@ -482,9 +473,6 @@ impl Ppu {
         }
         FetcherState::DataHigh => {
           self.fetcher.tile_hi = self.vram_read(self.fetcher.tileset_addr+1);
-          self.fetcher.state = FetcherState::Push;
-        }
-        FetcherState::Sleep => {
           self.fetcher.state = FetcherState::Push;
         }
         FetcherState::Push => {

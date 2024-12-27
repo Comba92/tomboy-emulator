@@ -71,21 +71,21 @@ impl Timer {
         }
     }
 
-    fn div_bit(&self) -> bool {
-        let bit = match self.tac.bits() & 0b11 {
-            0b00 => 9,
-            0b01 => 3,
-            0b10 => 5,
-            0b11 => 7,
-            _ => unreachable!()
-        };
+    // fn div_bit(&self) -> bool {
+    //     let bit = match self.tac.bits() & 0b11 {
+    //         0b00 => 9,
+    //         0b01 => 3,
+    //         0b10 => 5,
+    //         0b11 => 7,
+    //         _ => unreachable!()
+    //     };
 
-        (self.last_div >> bit) & 1 == 1 && (self.div >> bit) & 1 == 0
-    }
+    //     (self.last_div >> bit) & 1 == 1 && (self.div >> bit) & 1 == 0
+    // }
 
-    fn tac_enabled(&self) -> bool {
-        self.tac.contains(Flags::enable) && self.div_bit()
-    }
+    // fn tac_enabled(&self) -> bool {
+    //     self.tac.contains(Flags::enable) && self.div_bit()
+    // }
 
     pub fn read_reg(&self, addr: u16) -> u8 {
         match addr {

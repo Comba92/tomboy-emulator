@@ -4,7 +4,7 @@ use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
 use crate::{
-	bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, lsb, msb, ppu::Ppu
+	bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, lsb, msb
 };
 
 bitflags! {
