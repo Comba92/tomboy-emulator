@@ -19,7 +19,6 @@ bitflags! {
 
   #[derive(Default, Clone, Copy)]
   pub struct Stat: u8 {
-    const ppu_mode  = 0b0000_0011;
     const lyc_eq_ly = 0b0000_0100;
     const mode0_int = 0b0000_1000;
     const mode1_int = 0b0001_0000;
@@ -35,7 +34,7 @@ const VRAM2: u16 = 0x9000;
 const MAP0: u16 = 0x9800;
 const MAP1: u16 = 0x9C00; 
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 enum PpuMode {
   Hblank, // Mode0
   Vblank, // Mode1
@@ -261,7 +260,11 @@ impl Ppu {
   pub fn read(&self, addr: u16) -> u8 {
     match addr {
       0xFF40 => self.ctrl.bits(),
-      0xFF41 => self.stat.bits(),
+      0xFF41 => {
+        let mut res = self.stat.bits();
+        res |= self.mode as u8;
+        res
+      },
       0xFF42 => self.scy,
       0xFF43 => self.scx,
       0xFF44 => self.ly,
@@ -281,7 +284,7 @@ impl Ppu {
   pub fn write(&mut self, addr: u16, val: u8) {
     match addr {
       0xFF40 => self.ctrl = Ctrl::from_bits_retain(val),
-      0xFF41 => self.stat = Stat::from_bits_retain(val),
+      0xFF41 => self.stat = Stat::from_bits_retain(val & 0b0111_1000),
       0xFF42 => self.scy = val,
       0xFF43 => self.scx = val,
       0xFF44 => self.ly = val,
