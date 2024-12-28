@@ -1,4 +1,7 @@
 # TODO
+- LYC interrupt
+- Window edge cases
+- Objects edge cases
 
 # Resources
 - https://gekkio.fi/files/gb-docs/gbctr.pdf
