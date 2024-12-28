@@ -1,6 +1,6 @@
 use std::{cell::{Cell, RefCell}, rc::Rc};
 
-use crate::{apu::Apu, cart::Cart, joypad::Joypad, mapper::{self, Mapper}, ppu::Ppu, timer::Timer};
+use crate::{apu::Apu, joypad::Joypad, mbc::Cart, ppu::Ppu, timer::Timer};
 use bitflags::bitflags;
 
 bitflags! {
@@ -17,15 +17,11 @@ bitflags! {
 pub type SharedBus = Rc<RefCell<Bus>>;
 pub type InterruptFlags = Rc<Cell<IFlags>>;
 pub struct Bus {
-  rom: Vec<u8>,
   ram: [u8; 8*1024],
-  exram: Vec<u8>,
   hram: [u8; 0x7F],
   
+  pub cart: Cart,
   pub ppu: Ppu,
-  mapper: Box<dyn Mapper>,
-  #[allow(unused)]
-  cart: Cart,
   pub timer: Timer,
   pub joypad: Joypad,
   pub apu: Apu,
@@ -45,7 +41,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
   match addr {
     0x0000..=0x7FFF => (Rom, addr),
     0x8000..=0x9FFF => (VRam, addr - 0x8000),
-    0xA000..=0xBFFF => (ExRam, addr - 0xA000),
+    0xA000..=0xBFFF => (ExRam, addr),
     0xC000..=0xDFFF => (WRam, addr - 0xC000),
     0xE000..=0xFDFF => (WRam, (addr & 0xDFFF) - 0xC000),
     0xFE00..=0xFE9F => (Oam, addr - 0xFE00),
@@ -73,12 +69,9 @@ impl Bus {
     let cart = Cart::new(rom).unwrap();
 
     Self {
-      rom: Vec::from(rom),
       ram: [0; 8*1024],
-      exram: Vec::from([0].repeat(cart.ram_size)),
       hram: [0; 0x7F],
 
-      mapper: mapper::get_mapper(cart.mapper_code),
       cart,
       ppu: Ppu::new(intf.clone()),
       apu: Apu::default(),
@@ -98,16 +91,16 @@ impl Bus {
     let (target, addr) = map_addr(addr);
     use BusTarget::*;
     match &target {
-      Rom => self.mapper.read_rom(&self.rom, addr),
+      Rom => self.cart.rom_read(addr),
       VRam => self.ppu.vram[addr as usize],
-      ExRam => self.mapper.read_ram(&self.exram, addr),
+      ExRam => self.cart.ram_read(addr),
       WRam => self.ram[addr as usize],
       Oam => self.ppu.oam[addr as usize],
       Unusable => 0,
       Joypad => self.joypad.read(),
       Apu => self.apu.read(addr),
       Ppu => self.ppu.read(addr),
-      Timer => self.timer.read_reg(addr),
+      Timer => self.timer.read(addr),
       IF => self.intf.get().bits(),
       HRam => self.hram[addr as usize],
       IE => self.inte.bits(),
@@ -119,16 +112,16 @@ impl Bus {
     let (target, addr) = map_addr(addr);
     use BusTarget::*;
     match &target {
-      Rom => self.mapper.write_rom(&mut self.rom, addr, val),
+      Rom => self.cart.rom_write(addr, val),
       VRam => self.ppu.vram[addr as usize] = val,
-      ExRam => self.mapper.write_ram(&mut self.exram, addr, val),
+      ExRam => self.cart.ram_write(addr, val),
       WRam => self.ram[addr as usize] = val,
       Oam => self.ppu.oam[addr as usize] = val,
       Unusable => {}
       Joypad => self.joypad.write(val),
       Apu => self.apu.write(addr, val),
       Ppu => self.ppu.write(addr, val),
-      Timer => self.timer.write_reg(addr, val),
+      Timer => self.timer.write(addr, val),
       IF => self.intf.set(IFlags::from_bits_truncate(val)),
       HRam => self.hram[addr as usize] = val,
       IE => self.inte = IFlags::from_bits_truncate(val),

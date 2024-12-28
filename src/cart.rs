@@ -2,7 +2,7 @@ use core::{cmp, hash, str};
 
 #[allow(unused)]
 #[derive(Debug)]
-pub struct Cart {
+pub struct CartHeader {
     pub cart_type: &'static str,
     pub mapper_code: u8,
     title: String,
@@ -39,7 +39,7 @@ fn parse_info<Info: cmp::Eq + hash::Hash, Parsed: Copy>(
     .ok_or(err)
 }
 
-impl Cart {
+impl CartHeader {
     pub fn new(bytes: &[u8]) -> Result<Self, &str> {
         if bytes.len() < 0x104 + (0x14F - 0x104) {
             return Err("Rom file is too small")
@@ -131,14 +131,14 @@ impl Cart {
 
 #[cfg(test)]
 mod cart_tests {
-    use super::Cart;
+    use super::CartHeader;
 
     #[test]
     fn read_rom() {
         let rom = std::fs::read_dir("roms/").unwrap();
         for file in rom {
             let file = std::fs::read(file.unwrap().path()).unwrap();
-            match Cart::new(&file) {
+            match CartHeader::new(&file) {
                 Ok(cart) => println!("{:?}", cart),
                 Err(e) => println!("{e}"),
             }

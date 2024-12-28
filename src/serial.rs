@@ -1,5 +1,0 @@
-bitflags! {
-  pub struct Joypad {
-    
-  }
-}

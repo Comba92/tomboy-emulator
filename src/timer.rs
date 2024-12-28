@@ -87,7 +87,7 @@ impl Timer {
     //     self.tac.contains(Flags::enable) && self.div_bit()
     // }
 
-    pub fn read_reg(&self, addr: u16) -> u8 {
+    pub fn read(&self, addr: u16) -> u8 {
         match addr {
             0xFF04 => (self.div >> 8) as u8,
             0xFF05 => self.tima,
@@ -97,7 +97,7 @@ impl Timer {
         }
     }
 
-    pub fn write_reg(&mut self, addr: u16, val: u8) {
+    pub fn write(&mut self, addr: u16, val: u8) {
         match addr {
             0xFF04 => self.div = 0,
             0xFF05 => self.tima = val,
