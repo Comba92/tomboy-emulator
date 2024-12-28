@@ -243,9 +243,10 @@ impl Ppu {
   }
 
   fn ly_inc(&mut self) {
-    // wnd_line is only incremented when window is VISIBLE
+    // wnd_line is only incremented when window is VISIBLE and HIT
     if self.ly >= self.wy
-    && self.wx >= 7 && self.wx < 166
+    && self.wy < 143
+    && self.wx < 166
     {
       self.wnd_line += 1;
     }
@@ -385,54 +386,55 @@ impl Ppu {
     self.fetcher.obj_scanline.fill(None);
 
     for obj in &self.fetcher.obj_visible {
-      if obj.x >= 8 && obj.x < 168 {
-        let y = obj.y.saturating_sub(16);
-        let row = self.ly.abs_diff(y);
-        
-        // Sprite 8x16 tile handling
-        let tile_id = if self.ctrl.contains(Ctrl::obj_size) {
-          match obj.y_flip {
-            false => if row >= 8 { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
-            true  => if row >= 8 { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
-          }
-        } else { obj.tile_id };
+      if obj.x == 0 || obj.x >= 168 { continue; }
 
-        // Y flipping (simply reverse the y offset)
-        let y_offset = if obj.y_flip {
-          row.abs_diff(7)
-        } else { row };
-
-        let tileset_addr = VRAM0 
-          + 16*tile_id as u16
-          + 2*y_offset as u16;
-
-        let mut tile_lo = self.vram_read(tileset_addr);
-        let mut tile_hi = self.vram_read(tileset_addr+1);
-
-        // X flipping (reverse the bits, knowing that they are reversed without flipping)
-        if !obj.x_flip {
-          tile_lo = tile_lo.reverse_bits();
-          tile_hi = tile_hi.reverse_bits();
+      let y = obj.y.saturating_sub(16);
+      let row = self.ly.abs_diff(y);
+      
+      // Sprite 8x16 tile handling
+      let tile_id = if self.ctrl.contains(Ctrl::obj_size) {
+        match obj.y_flip {
+          false => if row >= 8 { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
+          true  => if row >= 8 { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
         }
+      } else { obj.tile_id };
 
-        // push each pixel
-        for i in 0..8 {
-          let x = obj.x.saturating_sub(8) + i;
-          if x >= 160 { break; }
+      // Y flipping (simply reverse the y offset)
+      let y_offset = if obj.y_flip {
+        row.abs_diff(7)
+      } else { row };
 
-          let pixel_lo = (tile_lo >> i) & 1;
-          let pixel_hi = (tile_hi >> i) & 1;
-          let color = (pixel_hi << 1) | pixel_lo;
-          if color == 0 { continue; }
+      let tileset_addr = VRAM0 
+        + 16*tile_id as u16
+        + 2*y_offset as u16;
 
-          let data = ObjFifoEntry { 
-            color,
-            palette: obj.dmg_palette,
-            priority: obj.priority
-          };
+      let mut tile_lo = self.vram_read(tileset_addr);
+      let mut tile_hi = self.vram_read(tileset_addr+1);
 
-          self.fetcher.obj_scanline[x as usize] = Some(data);
-        }
+      // X flipping (reverse the bits, knowing that they are reversed without flipping)
+      if !obj.x_flip {
+        tile_lo = tile_lo.reverse_bits();
+        tile_hi = tile_hi.reverse_bits();
+      }
+
+      // push each pixel
+      for i in 0..8 {
+        if obj.x + i < 8 || obj.x + i >= 168 { continue; }
+
+        let x = obj.x - 8 + i;
+
+        let pixel_lo = (tile_lo >> i) & 1;
+        let pixel_hi = (tile_hi >> i) & 1;
+        let color = (pixel_hi << 1) | pixel_lo;
+        if color == 0 { continue; }
+
+        let data = ObjFifoEntry { 
+          color,
+          palette: obj.dmg_palette,
+          priority: obj.priority
+        };
+
+        self.fetcher.obj_scanline[x as usize] = Some(data);
       }
     }
   }
