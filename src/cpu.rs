@@ -36,8 +36,6 @@ pub struct Cpu {
 	pub pc: u16,
 	pub ime: bool,
 	ime_to_set: bool,
-
-	dma: Dma,
 	halted: bool,
 	
 	pub mcycles: usize,
@@ -49,34 +47,6 @@ impl core::fmt::Debug for Cpu {
 				f.debug_struct("Cpu").field("a", &self.a).field("f", &self.f).field("bc", &self.bc).field("de", &self.de).field("hl", &self.hl).field("sp", &self.sp).field("pc", &self.pc).field("ime", &self.ime).field("ime_to_set", &self.ime_to_set).field("cycles", &self.mcycles)
 					.finish()
 		}
-}
-
-#[derive(Default)]
-struct Dma {
-	pub transfering: bool,
-	pub start: u16,
-	pub offset: u16,
-	pub start_delay: bool,
-}
-impl Dma {
-	pub fn init(&mut self, val: u8) {
-		self.start = (val as u16) << 8;
-		self.offset = 0;
-		self.start_delay = true;
-	}
-
-	pub fn current(&self) -> u16 {
-		self.start + self.offset
-	}
-
-	fn is_done(&self) -> bool {
-		self.offset >= 0x9F
-	}
-
-	pub fn tick(&mut self) {
-		self.offset += 1;
-		self.transfering = !self.is_done();
-	}
 }
 
 impl Cpu {
@@ -94,7 +64,6 @@ impl Cpu {
 			halted: false,
 			mcycles: 0,
 			bus: Bus::new(rom),
-			dma: Dma::default(),
 		}
 	}
 
@@ -168,17 +137,8 @@ impl Cpu {
 	}
 
 	pub fn write(&mut self, addr: u16, val: u8) {
-		if addr == 0xFF46 {
-			self.dma.init(val);
-		} else {
-			self.bus.write(addr, val);
-		}
-
+		self.bus.write(addr, val);
 		self.tick();
-	}
-	fn dma_write(&mut self) {
-		let val = self.peek(self.dma.current());
-		self.bus.write(0xFE00 + self.dma.offset, val);
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -215,13 +175,13 @@ impl Cpu {
 		if self.halted {
 			let inte = self.bus.inte;
 			let intf = self.bus.intf();
-
+			
 			if !(inte & intf).is_empty() { self.halted = false; }
 			else { self.tick(); }
-
+			
 			return;
 		}
-
+		
 		let opcode = self.pc_fetch();
 		
 		if opcode == 0xCB {
@@ -232,15 +192,8 @@ impl Cpu {
 			let instr = &INSTRUCTIONS[opcode as usize];
 			self.execute_no_prefix(instr)
 		}
-
-		if self.dma.start_delay {
-			self.dma.start_delay = false;
-			self.dma.transfering = true;
-		} else if self.dma.transfering {
-			self.dma_write();
-			self.dma.tick();
-		}
-
+		
+		self.bus.handle_dma();
 		if self.ime_to_set {
 			self.ime = true;
 			self.ime_to_set = false;

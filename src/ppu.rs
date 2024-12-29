@@ -24,6 +24,7 @@ bitflags! {
     const mode1_int = 0b0001_0000;
     const mode2_int = 0b0010_0000;
     const lyc_int   = 0b0100_0000;
+    const unused    = 0b1000_0000;
   }
 }
 
@@ -135,7 +136,6 @@ pub struct Ppu {
   oam_enabled: bool,
   ly: u8,
   wnd_line: u8,
-  wnd_hit: bool,
   lyc: u8,
   scy: u8,
   scx: u8,
@@ -167,7 +167,6 @@ impl Ppu {
       oam_enabled: false,
       ly: 0,
       wnd_line: 0,
-      wnd_hit: false,
       lyc: 0,
       scy: 0,
       scx: 0,
@@ -207,7 +206,6 @@ impl Ppu {
           self.oam_enabled = true;
           self.vram_enabled = true;
           self.fetcher.reset();
-          self.wnd_hit = false;
           
           self.mode = Hblank;
           self.send_lcd_int(Stat::mode0_int);
@@ -284,7 +282,11 @@ impl Ppu {
   pub fn write(&mut self, addr: u16, val: u8) {
     match addr {
       0xFF40 => self.ctrl = Ctrl::from_bits_retain(val),
-      0xFF41 => self.stat = Stat::from_bits_retain(val & 0b0111_1000),
+      0xFF41 => {
+        let mut res = Stat::from_bits_retain(val & 0b0111_1000);
+        res.set(Stat::lyc_eq_ly, self.stat.contains(Stat::lyc_eq_ly));
+        self.stat = res;
+      }
       0xFF42 => self.scy = val,
       0xFF43 => self.scx = val,
       0xFF44 => self.ly = val,
@@ -308,7 +310,7 @@ impl Ppu {
   }
 
   fn send_lcd_int(&mut self, flag: Stat) {
-    if self.stat.contains(flag) {
+    if self.stat.contains(flag) && self.is_ppu_enabled() {
       bus::send_interrupt(&self.intf, bus::IFlags::lcd);
     }
   }
@@ -395,12 +397,16 @@ impl Ppu {
       let row = self.ly.abs_diff(y);
       
       // Sprite 8x16 tile handling
-      let tile_id = if self.ctrl.contains(Ctrl::obj_size) {
-        match obj.y_flip {
-          false => if row >= 8 { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
-          true  => if row >= 8 { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
-        }
-      } else { obj.tile_id };
+      // let tile_id = if self.ctrl.contains(Ctrl::obj_size) {        
+      //   let is_lower = self.ly >= y + 8;
+      //   if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE }
+
+      //   // match obj.y_flip {
+      //   //   false => if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
+      //   //   true  => if is_lower { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
+      //   // }
+      // } else { obj.tile_id };
+      let tile_id = obj.tile_id;
 
       // Y flipping (simply reverse the y offset)
       let y_offset = if obj.y_flip {
@@ -447,7 +453,7 @@ impl Ppu {
       match self.fetcher.state {
         FetcherState::Tile => {
           let (y, tilemap_id) =
-          if self.wnd_hit
+          if self.fetcher.wnd_hit
           {
             let tilemap = self.wnd_tilemap();
             let x = self.fetcher.wnd_x & 31;
@@ -535,11 +541,11 @@ impl Ppu {
     self.lcd.set_pixel(self.fetcher.pixel_x as usize, self.ly as usize, color);
     self.fetcher.pixel_x += 1;
 
-    if !self.wnd_hit && self.ctrl.contains(Ctrl::wnd_enabled) 
+    if !self.fetcher.wnd_hit && self.ctrl.contains(Ctrl::wnd_enabled) 
       && self.fetcher.pixel_x + 7 >= self.wx
       && self.ly >= self.wy
     {
-      self.wnd_hit = true;
+      self.fetcher.wnd_hit = true;
       self.fetcher.bg_fifo.clear();
       self.fetcher.state = FetcherState::Tile;
     }

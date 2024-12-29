@@ -1,4 +1,4 @@
-use std::{cell::{Cell, RefCell}, rc::Rc};
+use std::{cell::Cell, rc::Rc};
 
 use crate::{apu::Apu, joypad::Joypad, mbc::Cart, ppu::Ppu, timer::Timer};
 use bitflags::bitflags;
@@ -14,11 +14,39 @@ bitflags! {
   }
 }
 
-pub type SharedBus = Rc<RefCell<Bus>>;
+#[derive(Default)]
+struct Dma {
+	start: u16,
+	offset: u16,
+}
+impl Dma {
+	pub fn init(&mut self, val: u8) {
+		self.start = (val as u16) << 8;
+		self.offset = 160;
+	}
+
+  pub fn current(&self) -> u16 {
+    self.start.wrapping_add(self.offset())
+  }
+
+  pub fn offset(&self) -> u16 {
+    160-self.offset
+  }
+
+  pub fn advance(&mut self) {
+    self.offset -= 1;
+  }
+
+  pub fn is_transferring(&self) -> bool {
+    self.offset > 0
+  }
+}
+
 pub type InterruptFlags = Rc<Cell<IFlags>>;
 pub struct Bus {
   ram: [u8; 8*1024],
   hram: [u8; 0x7F],
+  dma: Dma,
   
   pub cart: Cart,
   pub ppu: Ppu,
@@ -31,7 +59,7 @@ pub struct Bus {
 }
 
 enum BusTarget {
-  Rom, VRam, ExRam, WRam, Oam, Unusable, 
+  Rom, VRam, OamDma, ExRam, WRam, Oam, Unusable, 
   Joypad, Ppu, Apu, Timer, NoImpl, HRam, IF, IE,
 }
 
@@ -50,6 +78,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
     0xFF04..=0xFF07 => (Timer, addr),
     0xFF0F => (IF, addr),
     0xFF10..=0xFF3F => (Apu, addr),
+    0xFF46 => (OamDma, addr),
     0xFF40..=0xFF4B => (Ppu, addr),
     0xFF01..=0xFF7F => (NoImpl, addr),
     0xFF80..=0xFFFE => (HRam, addr - 0xFF80),
@@ -71,6 +100,7 @@ impl Bus {
     Self {
       ram: [0; 8*1024],
       hram: [0; 0x7F],
+      dma: Dma::default(),
 
       cart,
       ppu: Ppu::new(intf.clone()),
@@ -85,6 +115,17 @@ impl Bus {
   pub fn tick(&mut self) {
     for _ in 0..4 { self.ppu.tick(); }
     self.timer.tick();
+  }
+
+  pub fn handle_dma(&mut self) {
+    if self.dma.is_transferring() {
+      let addr = self.dma.current();
+      let val = self.read(addr);
+      self.write(0xFE00 + self.dma.offset(), val);
+      
+      self.dma.advance();
+      self.tick();
+    }
   }
 
   pub fn read(&mut self, addr: u16) -> u8 {
@@ -104,7 +145,7 @@ impl Bus {
       IF => self.intf.get().bits(),
       HRam => self.hram[addr as usize],
       IE => self.inte.bits(),
-      NoImpl => 0,
+      _ => 0,
     }
   }
 
@@ -121,6 +162,10 @@ impl Bus {
       Joypad => self.joypad.write(val),
       Apu => self.apu.write(addr, val),
       Ppu => self.ppu.write(addr, val),
+      OamDma => {
+        self.dma.init(val);
+        self.tick();
+      }
       Timer => self.timer.write(addr, val),
       IF => self.intf.set(IFlags::from_bits_truncate(val)),
       HRam => self.hram[addr as usize] = val,
