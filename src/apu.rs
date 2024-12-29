@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::nth_bit;
 
 use bitfield_struct::bitfield;

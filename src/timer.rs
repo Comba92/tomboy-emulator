@@ -8,8 +8,9 @@ use crate::bus;
 
 
 bitflags! {
-    #[derive(Default)]
+    #[derive(Default, Clone, Copy)]
     struct Flags: u8 {
+        const unused = 0b1111_1000;
         const enable = 0b100;
         const clock  = 0b011;
     }
@@ -92,7 +93,7 @@ impl Timer {
             0xFF04 => (self.div >> 8) as u8,
             0xFF05 => self.tima,
             0xFF06 => self.tma,
-            0xFF07 => self.tac.bits(),
+            0xFF07 => (self.tac | Flags::unused).bits(),
             _ => unreachable!(),
         }
     }
@@ -102,7 +103,7 @@ impl Timer {
             0xFF04 => self.div = 0,
             0xFF05 => self.tima = val,
             0xFF06 => self.tma = val,
-            0xFF07 => self.tac = Flags::from_bits_truncate(val & 0b111),
+            0xFF07 => self.tac = Flags::from_bits_retain(val & 0b111),
             _ => {}
         }
     }

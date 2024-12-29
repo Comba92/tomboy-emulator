@@ -6,6 +6,7 @@ use bitflags::bitflags;
 bitflags! {
   #[derive(PartialEq, Clone, Copy, Debug)]
   pub struct IFlags: u8 {
+    const unused = 0b1110_0000;
     const joypad = 0b0001_0000;
     const serial = 0b0000_1000;
     const timer  = 0b0000_0100;
@@ -80,9 +81,9 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
     0xFF10..=0xFF3F => (Apu, addr),
     0xFF46 => (OamDma, addr),
     0xFF40..=0xFF4B => (Ppu, addr),
-    0xFF01..=0xFF7F => (NoImpl, addr),
     0xFF80..=0xFFFE => (HRam, addr - 0xFF80),
     0xFFFF => (IE, addr),
+    0xFF00..=0xFFFF => (NoImpl, addr),
   }
 }
 
@@ -137,15 +138,14 @@ impl Bus {
       ExRam => self.cart.ram_read(addr),
       WRam => self.ram[addr as usize],
       Oam => self.ppu.oam[addr as usize],
-      Unusable => 0,
       Joypad => self.joypad.read(),
-      Apu => self.apu.read(addr),
+      // Apu => self.apu.read(addr),
       Ppu => self.ppu.read(addr),
       Timer => self.timer.read(addr),
-      IF => self.intf.get().bits(),
+      IF => (self.intf.get() | IFlags::unused).bits(),
       HRam => self.hram[addr as usize],
       IE => self.inte.bits(),
-      _ => 0,
+      _ => 0xFF,
     }
   }
 
@@ -167,9 +167,9 @@ impl Bus {
         self.tick();
       }
       Timer => self.timer.write(addr, val),
-      IF => self.intf.set(IFlags::from_bits_truncate(val)),
+      IF => self.intf.set(IFlags::from_bits_retain(val)),
       HRam => self.hram[addr as usize] = val,
-      IE => self.inte = IFlags::from_bits_truncate(val),
+      IE => self.inte = IFlags::from_bits_retain(val),
       NoImpl => {},
     }
   }

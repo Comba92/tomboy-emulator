@@ -58,10 +58,10 @@ impl Joypad {
 
   pub fn read(&self) -> u8 {
     match self.selected {
-      JoypadSelect::Both => 0x0000,
+      JoypadSelect::Both => 0xFF,
       JoypadSelect::Dpad => self.dpad.bits() & 0b1111,
       JoypadSelect::Buttons => self.buttons.bits() & 0b1111,
-      _ => 0xF,
+      _ => 0xFF,
     }
   }
 

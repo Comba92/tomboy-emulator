@@ -239,28 +239,13 @@ impl Ppu {
     };
   }
 
-  fn ly_inc(&mut self) {
-    // wnd_line is only incremented when window is VISIBLE and HIT
-    if self.ly >= self.wy
-    && self.wy < 143
-    && self.wx < 166
-    {
-      self.wnd_line += 1;
-    }
-    self.ly += 1;
-
-    self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
-    if self.stat.contains(Stat::lyc_eq_ly) {
-      self.send_lcd_int(Stat::lyc_int);
-    }
-  }
-
   pub fn read(&self, addr: u16) -> u8 {
     match addr {
       0xFF40 => self.ctrl.bits(),
       0xFF41 => {
         let mut res = self.stat.bits();
         res |= self.mode as u8;
+        res |= Stat::unused.bits();
         res
       },
       0xFF42 => self.scy,
@@ -281,7 +266,19 @@ impl Ppu {
 
   pub fn write(&mut self, addr: u16, val: u8) {
     match addr {
-      0xFF40 => self.ctrl = Ctrl::from_bits_retain(val),
+      0xFF40 => {
+        let old_ctrl = self.ctrl;
+        self.ctrl = Ctrl::from_bits_retain(val);
+
+        // lcd enabling/disabling logic
+        if !self.ctrl.contains(Ctrl::lcd_enabled) {
+          self.ly = 0;
+          self.wnd_line = 0;
+          self.stat.remove(Stat::lyc_eq_ly);
+        } else if !old_ctrl.contains(Ctrl::lcd_enabled) && self.ctrl.contains(Ctrl::lcd_enabled) {
+          self.tcycles = 0;
+        }
+      }
       0xFF41 => {
         let mut res = Stat::from_bits_retain(val & 0b0111_1000);
         res.set(Stat::lyc_eq_ly, self.stat.contains(Stat::lyc_eq_ly));
@@ -289,8 +286,11 @@ impl Ppu {
       }
       0xFF42 => self.scy = val,
       0xFF43 => self.scx = val,
-      0xFF44 => self.ly = val,
-      0xFF45 => self.lyc = val,
+      0xFF44 => if self.is_lcd_enabled() { self.ly = val; }
+      0xFF45 => {
+        self.lyc = val;
+        self.send_lyc_int();
+      }
       0xFF4A => self.wy = val,
       0xFF4B => self.wx = val,
       0xFF47 => self.bgp = val,
@@ -305,18 +305,41 @@ impl Ppu {
   }
 
   fn send_vblank_int(&mut self) {
-    bus::send_interrupt(&self.intf, bus::IFlags::vblank);
+    if self.is_lcd_enabled() {
+      bus::send_interrupt(&self.intf, bus::IFlags::vblank);
+    }
+
     self.vblank = Some(());
   }
 
   fn send_lcd_int(&mut self, flag: Stat) {
-    if self.stat.contains(flag) && self.is_ppu_enabled() {
+    if self.stat.contains(flag) && self.is_lcd_enabled() {
       bus::send_interrupt(&self.intf, bus::IFlags::lcd);
     }
   }
 
-  pub fn is_ppu_enabled(&self) -> bool {
+  fn send_lyc_int(&mut self) {
+    self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
+    if self.stat.contains(Stat::lyc_eq_ly) {
+      self.send_lcd_int(Stat::lyc_int);
+    }
+  }
+
+  pub fn is_lcd_enabled(&self) -> bool {
     self.ctrl.contains(Ctrl::lcd_enabled)
+  }
+
+  fn ly_inc(&mut self) {
+    // wnd_line is only incremented when window is VISIBLE and HIT
+    if self.ly >= self.wy
+    && self.wy < 143
+    && self.wx < 166
+    {
+      self.wnd_line += 1;
+    }
+    self.ly += 1;
+
+    self.send_lyc_int();
   }
 
   pub fn tileset_addr(&self, tileset_id: u8) -> u16 {
@@ -365,7 +388,7 @@ impl Ppu {
   }
 
   fn oam_scan(&mut self) {
-    self.fetcher.obj_visible.clear(); 
+    self.fetcher.obj_visible.clear();
 
     for i in (0..160).step_by(4) {
       let y = self.oam[i];
@@ -387,6 +410,7 @@ impl Ppu {
   }
 
   fn fill_obj_scanline(&mut self) {
+    if !self.is_lcd_enabled() { return; }
     if !self.ctrl.contains(Ctrl::obj_enabled) { return; }
     self.fetcher.obj_scanline.fill(None);
 
@@ -430,7 +454,7 @@ impl Ppu {
       for i in 0..8 {
         if obj.x + i < 8 || obj.x + i >= 168 { continue; }
 
-        let x = obj.x - 8 + i;
+        let x = obj.x + i - 8;
 
         let pixel_lo = (tile_lo >> i) & 1;
         let pixel_hi = (tile_hi >> i) & 1;
@@ -449,7 +473,7 @@ impl Ppu {
   }
 
   fn fetcher_step(&mut self) {
-    if self.fetcher.should_do_step && self.is_ppu_enabled() {
+    if self.fetcher.should_do_step && self.is_lcd_enabled() {
       match self.fetcher.state {
         FetcherState::Tile => {
           let (y, tilemap_id) =
@@ -509,7 +533,7 @@ impl Ppu {
   }
 
   fn push_pixel(&mut self) {
-    if !self.is_ppu_enabled() {
+    if !self.is_lcd_enabled() {
       self.lcd.set_pixel(self.fetcher.pixel_x as usize, self.ly as usize, self.bg_palette(0));
       self.fetcher.pixel_x += 1;
       return;
