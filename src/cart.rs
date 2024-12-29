@@ -13,6 +13,7 @@ pub struct CartHeader {
     pub sgb_support: bool,
     pub rom_size: usize,
     pub ram_size: usize,
+    pub has_battery: bool,
     version: u8,
     checksum: u8,
 }
@@ -68,6 +69,7 @@ impl CartHeader {
         let mapper_code = bytes[0x147];
         let cart_type = 
             parse_info(mapper_code, &CART_TYPE_MAP, "Invalid cart type")?;
+        let has_battery = cart_type.contains("BATTERY");
 
         let rom_size_id = bytes[0x148];
         let rom_size = 
@@ -89,9 +91,10 @@ impl CartHeader {
         let licensee_new = if licensee_id == 0x33 {
             let licensee_new_str = str
                 ::from_utf8(&bytes[0x144..=0x145])
-                .map_err(|_| "Invalid new licensee")?;
+                .unwrap_or("00");
             let licensee_new = 
-                parse_info(licensee_new_str, &NEW_LICESEE_MAP, "Invalid new licensee")?;
+                parse_info(licensee_new_str, &NEW_LICESEE_MAP, "Invalid new licensee")
+                .unwrap_or("None");
             licensee_new
         } else {
             NEW_LICESEE_MAP.iter().find(|i| i.0 == "00").unwrap().1
@@ -120,6 +123,7 @@ impl CartHeader {
             region,
             rom_size,
             ram_size,
+            has_battery,
             version,
             checksum,
         };
@@ -220,16 +224,16 @@ const CART_TYPE_MAP: [(u8, &str); 28] = [
     (0x03, "MBC1+RAM+BATTERY"),
     (0x05, "MBC2"),
     (0x06, "MBC2+BATTERY"),
-    (0x08, "ROM+RAM 9"),
-    (0x09, "ROM+RAM+BATTERY 9"),
+    (0x08, "ROM+RAM"),
+    (0x09, "ROM+RAM+BATTERY"),
     (0x0B, "MMM01"),
     (0x0C, "MMM01+RAM"),
     (0x0D, "MMM01+RAM+BATTERY"),
     (0x0F, "MBC3+TIMER+BATTERY"),
-    (0x10, "MBC3+TIMER+RAM+BATTERY 10"),
+    (0x10, "MBC3+TIMER+RAM+BATTERY"),
     (0x11, "MBC3"),
-    (0x12, "MBC3+RAM 10"),
-    (0x13, "MBC3+RAM+BATTERY 10"),
+    (0x12, "MBC3+RAM"),
+    (0x13, "MBC3+RAM+BATTERY"),
     (0x19, "MBC5"),
     (0x1A, "MBC5+RAM"),
     (0x1B, "MBC5+RAM+BATTERY"),
