@@ -14,8 +14,8 @@ pub struct FrameBuffer {
 
 impl FrameBuffer {
   pub fn new(width: usize, height: usize) -> Self {
-      let buffer = vec![0; width * height * PIXEL_BYTES];
-      Self { buffer, width, height }
+    let buffer = vec![0; width * height * PIXEL_BYTES];
+    Self { buffer, width, height }
   }
 
   pub fn gameboy_lcd() -> Self {
@@ -23,7 +23,17 @@ impl FrameBuffer {
   }
 
   pub fn pitch(&self) -> usize {
-      self.width * PIXEL_BYTES
+    self.width * PIXEL_BYTES
+  }
+
+  pub fn reset(&mut self) {
+    for idx in (0..self.buffer.len()).step_by(4) {
+      let color = &PALETTE[0];
+      self.buffer[idx + 0] = color.0;
+      self.buffer[idx + 1] = color.1;
+      self.buffer[idx + 2] = color.2;
+      self.buffer[idx + 3] = 255;
+    }
   }
 
   pub fn set_pixel(&mut self, x: usize, y: usize, color_id: u8) {

@@ -17,7 +17,7 @@ bitflags! {
     const lcd_enabled  = 0b1000_0000;
   }
 
-  #[derive(Default, Clone, Copy)]
+  #[derive(Default, Clone, Copy, PartialEq)]
   pub struct Stat: u8 {
     const lyc_eq_ly = 0b0000_0100;
     const mode0_int = 0b0000_1000;
@@ -55,8 +55,7 @@ struct Fetcher {
   bg_fifo: VecDeque<u8>,
   obj_scanline: [Option<ObjFifoEntry>; 160],
   should_do_step: bool,
-  bg_x: u8,
-  wnd_x: u8,
+  x: u8,
   wnd_hit: bool,
   pixel_x: u8,
   scroll_x: u8,
@@ -70,15 +69,14 @@ struct Fetcher {
 
 impl Default for Fetcher {
   fn default() -> Self {
-    Self { state: Default::default(), obj_visible: Default::default(), bg_fifo: Default::default(), obj_scanline: [const {None}; 160], should_do_step: Default::default(), bg_x: Default::default(), wnd_x: Default::default(), wnd_hit: Default::default(), pixel_x: Default::default(), scroll_x: Default::default(), tile_y: Default::default(), tileset_id: Default::default(), tileset_addr: Default::default(), tile_lo: Default::default(), tile_hi: Default::default() }
+    Self { state: Default::default(), obj_visible: Default::default(), bg_fifo: Default::default(), obj_scanline: [const {None}; 160], should_do_step: Default::default(), x: Default::default(), wnd_hit: Default::default(), pixel_x: Default::default(), scroll_x: Default::default(), tile_y: Default::default(), tileset_id: Default::default(), tileset_addr: Default::default(), tile_lo: Default::default(), tile_hi: Default::default() }
   }
 }
 
 impl Fetcher {
   pub fn reset(&mut self) {
     self.bg_fifo.clear();
-    self.bg_x = 0;
-    self.wnd_x = 0;
+    self.x = 0;
     self.wnd_hit = false;
     self.pixel_x = 0;
     self.scroll_x = 0;
@@ -160,7 +158,7 @@ impl Ppu {
       mode: Default::default(),
       vblank: None,
 
-      ctrl: Ctrl::empty(),
+      ctrl: Ctrl::lcd_enabled,
       stat: Stat::empty(),
 
       vram_enabled: false,
@@ -184,6 +182,8 @@ impl Ppu {
   pub fn tick(&mut self) {
     use PpuMode::*;
     
+    let old_stat = self.stat;
+
     self.tcycles += 1;
     if self.tcycles > 456 {
       self.tcycles = 0;
@@ -237,6 +237,12 @@ impl Ppu {
         }
       }
     };
+
+    // TODO: this works, but not totally correct
+    let lyc = self.ly == self.lyc;
+    if old_stat != self.stat || self.stat.contains(Stat::lyc_eq_ly) != lyc {
+      self.send_lyc_int();
+    }
   }
 
   pub fn read(&self, addr: u16) -> u8 {
@@ -271,12 +277,19 @@ impl Ppu {
         self.ctrl = Ctrl::from_bits_retain(val);
 
         // lcd enabling/disabling logic
-        if !self.ctrl.contains(Ctrl::lcd_enabled) {
-          self.ly = 0;
-          self.wnd_line = 0;
-          self.stat.remove(Stat::lyc_eq_ly);
-        } else if !old_ctrl.contains(Ctrl::lcd_enabled) && self.ctrl.contains(Ctrl::lcd_enabled) {
-          self.tcycles = 0;
+        if !old_ctrl.contains(Ctrl::lcd_enabled) && self.ctrl.contains(Ctrl::lcd_enabled) {
+          // it is turned on
+          if self.ctrl.contains(Ctrl::lcd_enabled) {
+            self.send_lyc_int();
+          // it is turned off
+          } else {
+            self.tcycles = 0;
+            self.ly = 0;
+            self.wnd_line = 0;
+            self.mode = PpuMode::Hblank;
+            self.fetcher.reset();
+            self.lcd.reset();
+          }
         }
       }
       0xFF41 => {
@@ -286,7 +299,6 @@ impl Ppu {
       }
       0xFF42 => self.scy = val,
       0xFF43 => self.scx = val,
-      0xFF44 => if self.is_lcd_enabled() { self.ly = val; }
       0xFF45 => {
         self.lyc = val;
         self.send_lyc_int();
@@ -320,6 +332,7 @@ impl Ppu {
 
   fn send_lyc_int(&mut self) {
     self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
+
     if self.stat.contains(Stat::lyc_eq_ly) {
       self.send_lcd_int(Stat::lyc_int);
     }
@@ -421,20 +434,21 @@ impl Ppu {
       let row = self.ly.abs_diff(y);
       
       // Sprite 8x16 tile handling
-      // let tile_id = if self.ctrl.contains(Ctrl::obj_size) {        
-      //   let is_lower = self.ly >= y + 8;
-      //   if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE }
+      let tile_id = if self.ctrl.contains(Ctrl::obj_size) {        
+        // let is_lower = self.ly >= y + 8;
+        // if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE }
 
-      //   // match obj.y_flip {
-      //   //   false => if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
-      //   //   true  => if is_lower { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
-      //   // }
-      // } else { obj.tile_id };
-      let tile_id = obj.tile_id;
+        // match obj.y_flip {
+        //   false => if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
+        //   true  => if is_lower { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
+        // }
+
+        obj.tile_id & 0xFE
+      } else { obj.tile_id };
 
       // Y flipping (simply reverse the y offset)
       let y_offset = if obj.y_flip {
-        row.abs_diff(7)
+        row.abs_diff(self.obj_size()-1)
       } else { row };
 
       let tileset_addr = VRAM0 
@@ -473,25 +487,25 @@ impl Ppu {
   }
 
   fn fetcher_step(&mut self) {
-    if self.fetcher.should_do_step && self.is_lcd_enabled() {
+    if self.fetcher.should_do_step {
       match self.fetcher.state {
         FetcherState::Tile => {
           let (y, tilemap_id) =
           if self.fetcher.wnd_hit
           {
             let tilemap = self.wnd_tilemap();
-            let x = self.fetcher.wnd_x & 31;
+            let x = self.fetcher.x;
             let y = self.wnd_line;
             let tilemap_id = tilemap + 32 * (y/8) as u16 + x as u16;
-            self.fetcher.wnd_x += 1;
+            self.fetcher.x = (self.fetcher.x + 1) % 32;
 
             (y, tilemap_id)
           } else {
             let tilemap = self.bg_tilemap();
             let y = self.ly.wrapping_add(self.scy);
-            let x = (self.fetcher.bg_x + self.scx/8) & 31;
+            let x = (self.fetcher.x + self.scx/8) & 31;
             let tilemap_id = tilemap + 32 * (y/8) as u16 + x as u16;
-            self.fetcher.bg_x += 1;
+            self.fetcher.x = (self.fetcher.x + 1) % 32;
 
             (y, tilemap_id)
           };
@@ -570,7 +584,9 @@ impl Ppu {
       && self.ly >= self.wy
     {
       self.fetcher.wnd_hit = true;
+      self.fetcher.x = 0;
       self.fetcher.bg_fifo.clear();
+      self.fetcher.should_do_step = false;
       self.fetcher.state = FetcherState::Tile;
     }
   }

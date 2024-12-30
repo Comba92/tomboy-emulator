@@ -122,8 +122,9 @@ impl Bus {
     if self.dma.is_transferring() {
       let addr = self.dma.current();
       let val = self.read(addr);
-      self.write(0xFE00 + self.dma.offset(), val);
-      
+      // self.write(0xFE00 + self.dma.offset(), val);
+      self.ppu.oam[self.dma.offset() as usize] = val;
+
       self.dma.advance();
       self.tick();
     }

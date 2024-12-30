@@ -90,7 +90,7 @@ impl Mapper for Mbc1 {
   }
 
   fn read_ram(&self, ram: &[u8], addr: u16) -> u8 {
-    if !self.ram_enabled { 0xFF }
+    if !self.ram_enabled || ram.is_empty() { 0xFF }
     else {
       let bank = if self.extended_mode { 
         self.ram_bank % self.ram_banks(ram)
@@ -102,7 +102,7 @@ impl Mapper for Mbc1 {
   }
 
   fn write_ram(&self, ram: &mut [u8], addr: u16, val: u8) {
-      if !self.ram_enabled { return; }
+      if !self.ram_enabled || ram.is_empty() { return; }
       
       let bank = if self.extended_mode { 
         self.ram_bank % self.ram_banks(ram)
