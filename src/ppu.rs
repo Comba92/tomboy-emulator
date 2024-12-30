@@ -180,7 +180,7 @@ impl Ppu {
   }
 
   pub fn tick(&mut self) {
-    use PpuMode::*;
+    if !self.is_lcd_enabled() { return; }
     
     let old_stat = self.stat;
 
@@ -189,7 +189,8 @@ impl Ppu {
       self.tcycles = 0;
       self.ly_inc();
     }
-
+    
+    use PpuMode::*;
     match self.mode {
       OamScan => {
         if self.tcycles >= 80 {
@@ -280,7 +281,12 @@ impl Ppu {
         if !old_ctrl.contains(Ctrl::lcd_enabled) && self.ctrl.contains(Ctrl::lcd_enabled) {
           // it is turned on
           if self.ctrl.contains(Ctrl::lcd_enabled) {
-            self.send_lyc_int();
+            self.tcycles = 80;
+            self.ly = 0;
+            self.wnd_line = 0;
+            self.mode = PpuMode::DrawingPixels;
+            self.fetcher.reset();
+
           // it is turned off
           } else {
             self.tcycles = 0;

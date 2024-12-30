@@ -68,6 +68,7 @@ struct Mbc1 {
   ram_bank: usize,
   extended_mode: bool,
 }
+
 impl Mapper for Mbc1 {
   fn read_rom(&self, rom: &[u8], addr: u16) -> u8 {
     let bank = match addr {
@@ -117,7 +118,7 @@ impl Mapper for Mbc1 {
       0x0000..=0x1FFF => self.ram_enabled = val & 0b1111 == 0x0A,
       0x2000..=0x3FFF => self.rom_bank = val as usize & 0b1_1111,
       0x4000..=0x5FFF => self.ram_bank = val as usize & 0b11,
-      0x6000..=0x7FFF => self.extended_mode = nth_bit(val, 1),
+      0x6000..=0x7FFF => self.extended_mode = nth_bit(val, 0),
       _ => unreachable!()
     }
   }
