@@ -1,6 +1,11 @@
 # TODO
-- LYC interrupt
+- LYC interrupt (ok?)
+- PPU accuracy
 - Window edge cases
+- Timer accuracy
+
+- Serial port (some games wont work correctly without it)
+- All mbcs
 
 # Resources
 - https://gekkio.fi/files/gb-docs/gbctr.pdf
