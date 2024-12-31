@@ -1,11 +1,12 @@
 use std::{error::Error, fs, time};
 
-use sdl2::{event::Event, keyboard::Keycode, pixels::PixelFormatEnum};
+use sdl2::{audio::AudioSpecDesired, event::Event, keyboard::Keycode, pixels::PixelFormatEnum};
 use tomboy_emulator::{cpu::Cpu, joypad};
 
 fn main() -> Result<(), Box<dyn Error>> {
   let sdl = sdl2::init()?;
   let video = sdl.video()?;
+  let audio = sdl.audio()?;
   let ms_frame = time::Duration::from_secs_f64(1.0 / 60.0);
 
   const WIN_WIDTH: u32 = 20*8;
@@ -25,6 +26,13 @@ fn main() -> Result<(), Box<dyn Error>> {
   let mut texture = texture_creator
     .create_texture_target(PixelFormatEnum::RGBA32, WIN_WIDTH, WIN_HEIGHT)?;
 
+  let desired_spec = AudioSpecDesired {
+    channels: Some(1),
+    freq: Some(44100),
+    samples: None,
+  };
+
+  let audio_buf = audio.open_queue::<i16, _>(None, &desired_spec)?;
 
   'running: loop {
     let ms_since_frame_start = time::Instant::now();

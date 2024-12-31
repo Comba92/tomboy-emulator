@@ -13,29 +13,60 @@ struct Period {
   __: u8,
 }
 
+const PULSE_DUTIES: [[u8; 8]; 4] = [
+  [1,1,1,1,1,1,1,0],
+  [0,1,1,1,1,1,1,0],
+  [0,1,1,1,1,0,0,0],
+  [1,0,0,0,0,0,0,1]
+];
+
 #[derive(Default, Clone, Copy)]
 enum PulseDuty { #[default] Duty12, Duty25, Duty50, Duty75 }
 #[derive(Default)]
 struct Pulse {
+  enabled: bool,
+
   sweep_pace: u8,
   sweep_dir: bool,
   sweep_step: u8,
 
-  duty: PulseDuty,
+  wave_duty: PulseDuty,
+  duty: u8,
   length_initial: u8,
-  length_count: u8,
+  length_timer: u8,
 
   volume_initial: u8,
   volume: u8,
   envelope_dir: bool,
   envelope_pace: u8,
 
-  period: Period,
-  count: u16,
+  period_initial: Period,
+  period: u16,
 
   length_enabled: bool,
 }
 impl Pulse {
+  pub fn tick_period(&mut self) {
+    self.period += 1;
+    if self.period >= 2048 {
+      self.period = 2048 - self.period_initial.0;
+      self.duty = (self.duty+1) % 8;
+    }
+  }
+
+  pub fn tick_length(&mut self) {
+    if self.length_enabled {
+      self.length_timer += 1;
+      if self.length_timer >= 64 {
+        self.enabled = false;
+      }
+    }
+  }
+
+  pub fn tick_sweep(&mut self) {
+
+  }
+
   pub fn read(&mut self, addr: u16) -> u8 {
     match addr {
       0 => {
@@ -43,6 +74,7 @@ impl Pulse {
         res |= self.sweep_step;
         res |= (self.sweep_dir as u8) << 3;
         res |= self.sweep_pace << 4;
+
         res
       }
       1 => (self.duty as u8) << 6,
@@ -67,7 +99,7 @@ impl Pulse {
       }
       1 => {
         self.length_initial = val & 0b1_1111;
-        self.duty = match val >> 6 {
+        self.wave_duty = match val >> 6 {
           0 => PulseDuty::Duty12,
           1 => PulseDuty::Duty25,
           2 => PulseDuty::Duty50,
@@ -80,11 +112,19 @@ impl Pulse {
         self.volume_initial = val >> 4;
         self.volume = self.volume_initial;
       }
-      3 => self.period.set_lo(val),
+      3 => self.period_initial.set_lo(val),
       4 => {
-        self.period.set_hi(val & 0b111);
+        self.period_initial.set_hi(val & 0b111);
         self.length_enabled = nth_bit(val, 6);
-        // TODO: trigger if bit 7 is set
+        if nth_bit(val, 7) {
+          self.enabled = true;
+          self.length_timer = self.length_initial;
+          self.period = self.period_initial.0;
+          self.duty = 0;
+          // TODO: reset envelope
+          self.volume = self.volume_initial;
+          // TODO: handle sweep trigger 
+        }
       }
       _ => {}
     }
@@ -97,17 +137,38 @@ pub struct Apu {
   volume_l: u8,
   volume_r: u8,
   tcycles: usize,
+  div: u16,
 
   pulse1: Pulse,
   pulse2: Pulse,
 }
 
 impl Apu {
+  pub fn tick(&mut self) {
+    self.div = self.div.wrapping_add(1);
+    if self.div == 0 {
+      // step envelope
+    }
+    if self.div % 16384  == 0 {
+      self.pulse1.tick_length();
+      self.pulse2.tick_length();
+    }
+    if self.div % 32768 == 0 {
+      // pulse sweep
+    }
+
+    // The following events occur every N DIV-APU ticks:
+    // Envelope sweep	8	64 Hz
+    // Sound length	2	256 Hz
+    // CH1 freq sweep	4	128 Hz
+  }
+
   pub fn read(&mut self, addr: u16) -> u8 {
     match addr {
       0xFF26 => {
         let mut res = 0;
         res |= (self.apu_enabled as u8) << 7;
+        res |= 0b0111_0000;
         // TODO: check channels active
         res
       }
