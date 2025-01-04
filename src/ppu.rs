@@ -126,7 +126,7 @@ pub struct Ppu {
   pub oam: [u8; 160],
 
   mode: PpuMode,
-  pub vblank: Option<()>,
+  pub frame_ready: Option<()>,
 
   ctrl: Ctrl,
   stat: Stat,
@@ -143,7 +143,7 @@ pub struct Ppu {
   obp0: u8,
   obp1: u8,
 
-  tcycles: u16,
+  tcycles: usize,
   intf: InterruptFlags,
 }
 
@@ -156,7 +156,7 @@ impl Ppu {
       oam: [0; 160],
 
       mode: Default::default(),
-      vblank: None,
+      frame_ready: None,
 
       ctrl: Ctrl::lcd_enabled,
       stat: Stat::empty(),
@@ -180,7 +180,12 @@ impl Ppu {
   }
 
   pub fn tick(&mut self) {
-    if !self.is_lcd_enabled() { return; }
+    if !self.is_lcd_enabled() {
+      self.tcycles += 1;
+      if self.tcycles >= 70224 {
+        self.frame_ready = Some(());
+      }
+    }
     
     let old_stat = self.stat;
 
@@ -327,7 +332,7 @@ impl Ppu {
       bus::send_interrupt(&self.intf, bus::IFlags::vblank);
     }
 
-    self.vblank = Some(());
+    self.frame_ready = Some(());
   }
 
   fn send_lcd_int(&mut self, flag: Stat) {

@@ -1,6 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 
-use crate::{apu::Apu, joypad::Joypad, mbc::Cart, ppu::Ppu, timer::Timer};
+use crate::{apu::Apu, joypad::Joypad, mbc::Cart, ppu::Ppu, serial::Serial, timer::Timer};
 use bitflags::bitflags;
 
 bitflags! {
@@ -52,6 +52,7 @@ pub struct Bus {
   pub cart: Cart,
   pub ppu: Ppu,
   pub timer: Timer,
+  pub serial: Serial,
   pub joypad: Joypad,
   pub apu: Apu,
 
@@ -61,7 +62,7 @@ pub struct Bus {
 
 enum BusTarget {
   Rom, VRam, OamDma, ExRam, WRam, Oam, Unusable, 
-  Joypad, Ppu, Apu, Timer, NoImpl, HRam, IF, IE,
+  Joypad, Serial, Ppu, Apu, Timer, NoImpl, HRam, IF, IE,
 }
 
 #[allow(unused)]
@@ -76,6 +77,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
     0xFE00..=0xFE9F => (Oam, addr - 0xFE00),
     0xFEA0..=0xFEFF => (Unusable, addr),
     0xFF00 => (Joypad, addr),
+    0xFF01..=0xFF02 => (Serial, addr),
     0xFF04..=0xFF07 => (Timer, addr),
     0xFF0F => (IF, addr),
     0xFF10..=0xFF3F => (Apu, addr),
@@ -106,6 +108,7 @@ impl Bus {
       ppu: Ppu::new(intf.clone()),
       apu: Apu::default(),
       timer: Timer::new(intf.clone()),
+      serial: Serial::new(intf.clone()),
       joypad: Joypad::new(intf.clone()),
       inte: IFlags::empty(), 
       intf,
@@ -139,6 +142,7 @@ impl Bus {
       WRam => self.ram[addr as usize],
       Oam => self.ppu.oam[addr as usize],
       Joypad => self.joypad.read(),
+      Serial => self.serial.read(addr),
       // Apu => self.apu.read(addr),
       Ppu => self.ppu.read(addr),
       Timer => self.timer.read(addr),
@@ -160,6 +164,7 @@ impl Bus {
       Oam => self.ppu.oam[addr as usize] = val,
       Unusable => {}
       Joypad => self.joypad.write(val),
+      Serial => self.serial.write(addr, val),
       Apu => self.apu.write(addr, val),
       Ppu => self.ppu.write(addr, val),
       OamDma => {

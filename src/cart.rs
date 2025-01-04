@@ -11,7 +11,9 @@ pub struct CartHeader {
     region: Region,
     pub cgb_mode: CgbMode,
     pub sgb_support: bool,
+    pub rom_banks: usize,
     pub rom_size: usize,
+    pub ram_banks: usize,
     pub ram_size: usize,
     pub has_battery: bool,
     version: u8,
@@ -80,12 +82,14 @@ impl CartHeader {
         let has_battery = cart_type.contains("BATTERY");
 
         let rom_size_id = bytes[0x148];
-        let rom_size = 
-            16*1024*parse_info(rom_size_id, &ROM_SIZE_MAP, "Invalid ROM size")?;
+        let rom_banks = 
+            parse_info(rom_size_id, &ROM_SIZE_MAP, "Invalid ROM size")?;
+        let rom_size = 16*1024*rom_banks;
 
         let ram_size_id = bytes[0x149];
-        let ram_size = 
-            8*1024*parse_info(ram_size_id, &RAM_SIZE_MAP, "Invalid RAM size")?;
+        let ram_banks = 
+            parse_info(ram_size_id, &RAM_SIZE_MAP, "Invalid RAM size")?;
+        let ram_size = 8*1024*ram_banks;
 
         let region = match bytes[0x14a] != 0 {
             false => Region::Japan,
@@ -129,6 +133,8 @@ impl CartHeader {
             licensee,
             licensee_new,
             region,
+            rom_banks,
+            ram_banks,
             rom_size,
             ram_size,
             has_battery,

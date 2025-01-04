@@ -220,11 +220,12 @@ impl Cpu {
 	fn handle_interrupts(&mut self) {
 		let mut intf = self.bus.intf();
 
-		let mut pending_ints = (self.bus.inte & intf).iter().collect::<Vec<_>>();
+		let mut pending_ints = (self.bus.inte & intf)
+			.iter().collect::<Vec<_>>();
 		pending_ints.reverse();
 
-		for int in pending_ints {
-			let addr = match int {
+		if let Some(int) = pending_ints.first() {
+			let addr = match *int {
 				IFlags::vblank => 0x40,
 				IFlags::lcd    => 0x48,
 				IFlags::timer  => 0x50,
@@ -233,7 +234,7 @@ impl Cpu {
 				_ => unreachable!(),
 			};
 
-			intf.remove(int);
+			intf.remove(*int);
 			self.bus.set_intf(intf);
 
 			self.ime = false;
@@ -245,9 +246,6 @@ impl Cpu {
 			self.stack_push(self.pc);
 			self.pc = addr;
 			self.tick();
-			
-			// we don't want to handle any more interrupt
-			break;
 		}
 	}
 

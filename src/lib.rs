@@ -6,6 +6,7 @@ pub mod instr;
 pub mod bus;
 
 pub mod timer;
+pub mod serial;
 pub mod joypad;
 pub mod apu;
 
