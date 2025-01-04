@@ -16,6 +16,7 @@ pub fn get_mbc(header: &CartHeader) -> Result<Box<dyn Mapper>, String> {
 }
 
 pub struct Cart {
+  pub header: CartHeader,
   rom: Vec<u8>,
   exram: Vec<u8>,
   mbc: Box<dyn Mapper>,
@@ -24,13 +25,13 @@ pub struct Cart {
 impl Cart {
   pub fn new(rom: &[u8]) -> Result<Self, String> {
     let header = CartHeader::new(rom)?;
-    println!("{:?}", header);
+    println!("Loaded Gameboy ROM: {:#?}", header);
 
     let mbc = get_mbc(&header)?;
     let exram = Vec::from([0].repeat(header.ram_size));
     let rom = Vec::from(rom);
 
-    Ok(Self { rom, exram, mbc })
+    Ok(Self { header, rom, exram, mbc })
   }
 
   pub fn rom_read(&self, addr: u16) -> u8 {

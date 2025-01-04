@@ -4,7 +4,7 @@ use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
 use crate::{
-	bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, lsb, msb
+	bus::{Bus, IFlags}, instr::{InstrTarget, Instruction, TargetKind, ACC_TARGET, INSTRUCTIONS}, lsb, mbc::Cart, msb
 };
 
 bitflags! {
@@ -50,7 +50,7 @@ impl core::fmt::Debug for Cpu {
 }
 
 impl Cpu {
-	pub fn new(rom: &[u8]) -> Self {
+	pub fn new(cart: Cart) -> Self {
 		Self {
 			a: 1,
 			f: Flags::from_bits_truncate(0xB0),
@@ -63,7 +63,7 @@ impl Cpu {
 			ime_to_set: false,
 			halted: false,
 			mcycles: 0,
-			bus: Bus::new(rom),
+			bus: Bus::new(cart),
 		}
 	}
 

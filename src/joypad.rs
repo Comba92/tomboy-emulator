@@ -32,9 +32,9 @@ impl Joypad {
 
   pub fn button_pressed(&mut self, button: Flags) {
     // if self.buttons.is_empty() {
-    if self.selected == JoypadSelect::Buttons {
+    // if self.selected == JoypadSelect::Buttons {
       bus::send_interrupt(&self.intf, bus::IFlags::joypad);
-    }
+    // }
     // }
     self.buttons.remove(button);
   }
@@ -45,9 +45,9 @@ impl Joypad {
 
   pub fn dpad_pressed(&mut self, button: Flags) {
     // if self.dpad.is_empty() {
-    if self.selected == JoypadSelect::Dpad {
+    // if self.selected == JoypadSelect::Dpad {
       bus::send_interrupt(&self.intf, bus::IFlags::joypad);
-    }
+    // }
     // }
     self.dpad.remove(button);
   }

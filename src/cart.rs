@@ -1,7 +1,7 @@
 use core::{cmp, hash, str};
 
 #[allow(unused)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CartHeader {
     pub cart_type: &'static str,
     pub mapper_code: u8,
@@ -24,9 +24,9 @@ const NINTENDO_LOGO: [u8; 48] = [
     0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
 ];
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CgbMode { Monochrome, CgbEnhanced, ColorOnly }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Region { Japan, Overseas } 
 
 fn parse_info<Info: cmp::Eq + hash::Hash, Parsed: Copy>(
@@ -38,6 +38,14 @@ fn parse_info<Info: cmp::Eq + hash::Hash, Parsed: Copy>(
     map.iter().find(|i| i.0 == code)
     .map(|o| o.1)
     .ok_or(err)
+}
+
+pub fn is_gb_rom(bytes: &[u8]) -> bool {
+    if bytes.len() < 0x104 + (0x14F - 0x104) {
+        return false;
+    }
+
+    bytes[0x104..=0x133] == NINTENDO_LOGO
 }
 
 impl CartHeader {
@@ -112,7 +120,7 @@ impl CartHeader {
             return Err("Invalid checksum");
         }
 
-        let header = Self {
+        Ok(Self {
             title,
             mapper_code,
             cgb_mode,
@@ -126,10 +134,7 @@ impl CartHeader {
             has_battery,
             version,
             checksum,
-        };
-
-        println!("{:#?}", header);
-        Ok(header)
+        })
     }
 }
 

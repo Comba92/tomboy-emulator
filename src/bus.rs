@@ -94,9 +94,8 @@ pub fn send_interrupt(intf: &Cell<IFlags>, int: IFlags) {
 }
 
 impl Bus {
-  pub fn new(rom: &[u8]) -> Bus {
+  pub fn new(cart: Cart) -> Bus {
     let intf = Rc::new(Cell::new(IFlags::empty()));
-    let cart = Cart::new(rom).unwrap();
 
     Self {
       ram: [0; 8*1024],
