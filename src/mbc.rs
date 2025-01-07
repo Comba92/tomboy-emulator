@@ -1,4 +1,6 @@
-use std::usize;
+use std::{u8, usize};
+
+use serde_json::Map;
 
 use crate::{cart::CartHeader, nth_bit};
 
@@ -8,7 +10,8 @@ pub fn get_mbc(header: &CartHeader) -> Result<Box<dyn Mapper>, String> {
     0x00 | 0x08 | 0x09 => NoMbc::new(header),
     0x01 | 0x02 | 0x03 => Mbc1::new(header),
     0x05 | 0x06 => Mbc2::new(header),
-    // 0x0F ..= 0x13 => Box::new(Mbc3::default()),
+    0x0F ..= 0x13 => Mbc3::new(header),
+    0x19 ..= 0x1E => Mbc5::new(header),
     _ => return Err(format!("Mapper {code} not implemented")),
   };
 
@@ -65,6 +68,8 @@ pub trait Mapper {
   }
 
   fn rom_write(&mut self, addr: u16, val: u8);
+
+  fn tick(&mut self) {}
 }
 
 struct NoMbc;
@@ -223,6 +228,163 @@ impl Mapper for Mbc2 {
   }
 }
 
-struct Mbc3 {
 
+
+struct Mbc3 {
+  rom_banks: Banking,
+  ram_banks: Banking,
+  ram_enabled: bool,
+  
+  rtc_select: u8,
+  rtc_seconds: u8,
+  rtc_minutes: u8,
+  rtc_hours: u8,
+  rtc_day: u16,
+  rtc_carry: bool,
+  rtc_halted: bool,
+}
+
+impl Mapper for Mbc3 {
+  fn new(header: &CartHeader) -> Box<Self> {
+    let mut rom_banks = Banking::new_rom(header, 2);
+    let ram_banks = Banking::new_ram(header);
+    rom_banks.set(1, 1);
+
+    Box::new(Self {
+      rom_banks, ram_banks, ram_enabled: false,
+      rtc_select: 0,
+      rtc_halted: false,
+      rtc_seconds: 0,
+      rtc_minutes: 0,
+      rtc_hours: 0,
+      rtc_day: 0,
+      rtc_carry: false,
+    })
+  }
+
+  fn rom_addr(&mut self, addr: u16) -> usize {
+    self.rom_banks.addr(addr as usize)
+  }
+
+  fn ram_addr(&mut self, addr: u16) -> (bool, usize) {
+    (self.ram_enabled, self.ram_banks.addr(addr as usize))
+  }
+
+  fn rom_write(&mut self, addr: u16, val: u8) {
+    match addr {
+      0x0000..=0x1FFF => self.ram_enabled = val == 0x0A,
+      0x2000..=0x3FFF => {
+        let bank = (val & 0b0111_1111)
+          .clamp(1, u8::MAX);
+        self.rom_banks.set(1, bank as usize);
+      }
+      0x4000..=0x5FFF => {
+        if (0x8..=0xC).contains(&val) {
+          self.rtc_select = val;
+        } else {
+          self.ram_banks.set(0, val as usize & 0b11);
+          self.rtc_select = 0;
+        }
+      }
+      0x6000..=0x7FFF => {
+
+      }
+      _ => {}
+    }
+  }
+
+  fn ram_read(&mut self, exram: &[u8], addr: u16) -> u8 {
+    let (enabled, addr) = self.ram_addr(addr);
+    if !enabled { return 0xFF; }
+
+    if self.rtc_select != 0 {
+      // TODO: rtc
+      0xFF
+    } else {
+      exram[addr]
+    }
+  }
+
+  fn ram_write(&mut self, exram: &mut[u8], addr: u16, val: u8) {
+    let (enabled, addr) = self.ram_addr(addr);
+    if !enabled { return; }
+
+    if self.rtc_select != 0 {
+      // TODO: rtc
+    } else {
+      exram[addr] = val;
+    }
+  }
+
+  fn tick(&mut self) {
+    // TODO: rtc
+  }
+}
+
+struct Mbc5 {
+  rom_banks: Banking,
+  ram_banks: Banking,
+  ram_enabled: bool,
+  rom_select: usize,
+}
+
+impl Mapper for Mbc5 {
+  fn new(header: &CartHeader) -> Box<Self> {
+    let mut rom_banks = Banking::new_rom(header, 2);
+    let ram_banks = Banking::new_ram(header);
+
+    rom_banks.set(1, 1);
+
+    Box::new(Self{
+      rom_banks, ram_banks,
+      ram_enabled: false,
+      rom_select: 1
+    })
+  }
+
+  fn rom_addr(&mut self, addr: u16) -> usize {
+    self.rom_banks.addr(addr as usize)
+  }
+
+  fn ram_addr(&mut self, addr: u16) -> (bool, usize) {
+    (self.ram_enabled, self.ram_banks.addr(addr as usize))
+  }
+
+  fn rom_write(&mut self, addr: u16, val: u8) {
+    match addr {
+      0x0000..=0x1FFF => self.ram_enabled = val == 0x0A,
+      0x2000..=0x2FFF => {
+        self.rom_select = (self.rom_select & 0xF0) | val as usize;
+        self.rom_banks.set(1, self.rom_select);
+      }
+      0x3000..=0x3FFF => {
+        self.rom_select = 
+          (self.rom_select & 0x0F) | ((val as usize & 0b10) << 8);
+        self.rom_banks.set(1, self.rom_select);
+      }
+      0x4000..=0x5FFF => self.ram_banks.set(0, val as usize & 0xF),
+      _ => {}
+    }
+  }
+}
+
+struct Mbc6 {
+
+}
+impl Mapper for Mbc6 {
+  fn new(header: &CartHeader) -> Box<Self> {
+      todo!()
+  }
+
+  fn rom_addr(&mut self, addr: u16) -> usize {
+      todo!()
+  }
+
+  fn ram_addr(&mut self, addr: u16) -> (bool, usize) {
+      todo!()
+  }
+
+  fn rom_write(&mut self, addr: u16, val: u8) {
+      todo!()
+  }
 }
