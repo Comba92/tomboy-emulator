@@ -71,7 +71,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
   match addr {
     0x0000..=0x7FFF => (Rom, addr),
     0x8000..=0x9FFF => (VRam, addr - 0x8000),
-    0xA000..=0xBFFF => (ExRam, addr),
+    0xA000..=0xBFFF => (ExRam, addr - 0xA000),
     0xC000..=0xDFFF => (WRam, addr - 0xC000),
     0xE000..=0xFDFF => (WRam, (addr & 0xDFFF) - 0xC000),
     0xFE00..=0xFE9F => (Oam, addr - 0xFE00),
