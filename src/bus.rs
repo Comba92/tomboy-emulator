@@ -117,7 +117,7 @@ impl Bus {
 
   pub fn tick(&mut self) {
     for _ in 0..4 { self.ppu.tick(); }
-    // self.timer.tick();
+    for _ in 0..4 { self.timer.tick(); }
   }
 
   pub fn handle_dma(&mut self) {
@@ -128,7 +128,7 @@ impl Bus {
       self.ppu.oam[self.dma.offset() as usize] = val;
 
       self.dma.advance();
-      self.tick();
+      // self.tick();
     }
   }
 

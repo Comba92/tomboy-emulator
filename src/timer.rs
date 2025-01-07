@@ -41,6 +41,14 @@ impl Timer {
     }
   }
 
+  fn tick_tima(&mut self) {
+    if self.tac.contains(Flags::enable) {
+      let (res, overflow) = self.tima.overflowing_add(1);
+      self.tima = res;
+      self.tima_overflow_delay = if overflow { 4 } else { 0 };
+    }
+  }
+
   pub fn tick(&mut self) {
     self.tima_just_reloaded = false;
 
@@ -54,11 +62,8 @@ impl Timer {
     }
       
     let new_div = self.div.wrapping_add(1);
-    if new_div & self.tima_clock == 0 && self.div & self.tima_clock != 0
-    && self.tac.contains(Flags::enable) {
-      let (res, overflow) = self.tima.overflowing_add(1);
-      self.tima = res;
-      self.tima_overflow_delay = if overflow { 4 } else { 0 };
+    if self.div & self.tima_clock != 0 && new_div & self.tima_clock == 0 {
+      self.tick_tima();
     }
 
     self.div = new_div;
@@ -86,7 +91,13 @@ impl Timer {
 
   pub fn write(&mut self, addr: u16, val: u8) {
     match addr {
-      0xFF04 => self.div = 0,
+      0xFF04 => {
+        if self.div & self.tima_clock != 0 {
+          self.tick_tima();
+        }
+
+        self.div = 0;
+      }
       0xFF05 => {
         // https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#timer-overflow-behavior
 
@@ -107,6 +118,10 @@ impl Timer {
       0xFF07 => {
         self.tac = Flags::from_bits_retain(val & 0b111);
         self.tima_clock = self.tima_clock_bit();
+
+        if self.div & self.tima_clock != 0 && !self.tac.contains(Flags::enable) {
+          self.tick_tima();
+        }
 
         // TODO: TAC TIMA increment glitch
       }

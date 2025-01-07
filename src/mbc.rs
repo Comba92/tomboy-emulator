@@ -1,7 +1,5 @@
 use std::{u8, usize};
 
-use serde_json::Map;
-
 use crate::{cart::CartHeader, nth_bit};
 
 pub fn get_mbc(header: &CartHeader) -> Result<Box<dyn Mapper>, String> {
@@ -365,26 +363,5 @@ impl Mapper for Mbc5 {
       0x4000..=0x5FFF => self.ram_banks.set(0, val as usize & 0xF),
       _ => {}
     }
-  }
-}
-
-struct Mbc6 {
-
-}
-impl Mapper for Mbc6 {
-  fn new(header: &CartHeader) -> Box<Self> {
-      todo!()
-  }
-
-  fn rom_addr(&mut self, addr: u16) -> usize {
-      todo!()
-  }
-
-  fn ram_addr(&mut self, addr: u16) -> (bool, usize) {
-      todo!()
-  }
-
-  fn rom_write(&mut self, addr: u16, val: u8) {
-      todo!()
   }
 }
