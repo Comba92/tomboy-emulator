@@ -181,6 +181,15 @@ impl Cpu {
 			
 			return;
 		}
+				
+		if self.ime_to_set {
+			self.ime = true;
+			self.ime_to_set = false;
+		} else if self.ime {
+			self.handle_interrupts();
+		}
+
+		self.bus.handle_dma();
 		
 		let opcode = self.pc_fetch();
 		
@@ -191,14 +200,6 @@ impl Cpu {
 		} else { 
 			let instr = &INSTRUCTIONS[opcode as usize];
 			self.execute_no_prefix(instr)
-		}
-		
-		self.bus.handle_dma();
-		if self.ime_to_set {
-			self.ime = true;
-			self.ime_to_set = false;
-		} else if self.ime {
-			self.handle_interrupts();
 		}
 	}
 
@@ -866,10 +867,14 @@ impl Cpu {
 	fn di(&mut self) { self.ime = false; self.ime_to_set = false; }
 	fn ei(&mut self) { self.ime_to_set = true; }
 
-	fn stop(&mut self, ops: &[InstrTarget]) {  } // TODO
+	fn stop(&mut self, _ops: &[InstrTarget]) {  } // TODO
 	fn halt(&mut self) {
-		// TODO: halt bug
-		self.halted = true;
+		if !self.ime && !(self.bus.inte & self.bus.intf()).is_empty() {
+			self.halted = false;
+			self.pc = self.pc.wrapping_sub(1);
+		} else {
+			self.halted = true;
+		}
 	}
 }
 
