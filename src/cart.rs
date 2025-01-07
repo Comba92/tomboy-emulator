@@ -90,6 +90,8 @@ impl CartHeader {
         let ram_banks = 
             parse_info(ram_size_id, &RAM_SIZE_MAP, "Invalid RAM size")?;
         let ram_size = 8*1024*ram_banks;
+        // default ram to 8kb
+        let ram_size = if ram_size > 0 { ram_size } else { 8*1024 };
 
         let region = match bytes[0x14a] != 0 {
             false => Region::Japan,

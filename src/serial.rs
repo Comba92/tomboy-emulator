@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-use crate::bus::{self, IFlags, InterruptFlags};
+use crate::bus::InterruptFlags;
 
 bitflags! {
   #[derive(Clone, Copy)]
