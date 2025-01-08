@@ -52,7 +52,7 @@ impl Gameboy {
   }
 
   pub fn get_samples(&mut self) -> Vec<f32> {
-    Default::default()
+    self.get_apu().get_samples()
   }
 
   pub fn get_joypad(&mut self) -> &mut Joypad {

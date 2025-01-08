@@ -13,7 +13,7 @@ struct Period {
   __: u8,
 }
 
-const PULSE_DUTIES: [[u8; 8]; 4] = [
+const SQUARE_DUTIES: [[u8; 8]; 4] = [
   [1,1,1,1,1,1,1,0],
   [0,1,1,1,1,1,1,0],
   [0,1,1,1,1,0,0,0],
@@ -21,16 +21,16 @@ const PULSE_DUTIES: [[u8; 8]; 4] = [
 ];
 
 #[derive(Default, Clone, Copy)]
-enum PulseDuty { #[default] Duty12, Duty25, Duty50, Duty75 }
+enum SquareDuty { #[default] Duty12, Duty25, Duty50, Duty75 }
 #[derive(Default)]
-struct Pulse {
+struct Square {
   enabled: bool,
 
   sweep_pace: u8,
   sweep_dir: bool,
   sweep_step: u8,
 
-  wave_duty: PulseDuty,
+  wave_duty: SquareDuty,
   duty: u8,
   length_initial: u8,
   length_timer: u8,
@@ -45,7 +45,7 @@ struct Pulse {
 
   length_enabled: bool,
 }
-impl Pulse {
+impl Square {
   pub fn tick_period(&mut self) {
     self.period += 1;
     if self.period >= 2048 {
@@ -100,10 +100,10 @@ impl Pulse {
       1 => {
         self.length_initial = val & 0b1_1111;
         self.wave_duty = match val >> 6 {
-          0 => PulseDuty::Duty12,
-          1 => PulseDuty::Duty25,
-          2 => PulseDuty::Duty50,
-          _ => PulseDuty::Duty75,
+          0 => SquareDuty::Duty12,
+          1 => SquareDuty::Duty25,
+          2 => SquareDuty::Duty50,
+          _ => SquareDuty::Duty75,
         };
       }
       2 => {
@@ -139,8 +139,10 @@ pub struct Apu {
   tcycles: usize,
   div: u16,
 
-  pulse1: Pulse,
-  pulse2: Pulse,
+  square1: Square,
+  square2: Square,
+
+  samples: Vec<f32>,
 }
 
 impl Apu {
@@ -150,11 +152,11 @@ impl Apu {
       // step envelope
     }
     if self.div % 16384  == 0 {
-      self.pulse1.tick_length();
-      self.pulse2.tick_length();
+      self.square1.tick_length();
+      self.square2.tick_length();
     }
     if self.div % 32768 == 0 {
-      // pulse sweep
+      // square sweep
     }
 
     // The following events occur every N DIV-APU ticks:
@@ -182,8 +184,8 @@ impl Apu {
         res |= self.volume_r << 0;
         res
       }
-      0xFF10..=0xFF14 => self.pulse1.read(addr - 0xFF10),
-      0xFF16..=0xFF19 => self.pulse2.read(addr - 0xFF16),
+      0xFF10..=0xFF14 => self.square1.read(addr - 0xFF10),
+      0xFF16..=0xFF19 => self.square2.read(addr - 0xFF16),
       _ => 0,
     }
   }
@@ -201,9 +203,13 @@ impl Apu {
         self.volume_l = (val >> 4) & 0b111;
         self.volume_r = (val >> 0) & 0b111;
       }
-      0xFF10..=0xFF14 => self.pulse1.write(addr - 0xFF10, val),
-      0xFF16..=0xFF19 => self.pulse2.write(addr - 0xFF16, val),
+      0xFF10..=0xFF14 => self.square1.write(addr - 0xFF10, val),
+      0xFF16..=0xFF19 => self.square2.write(addr - 0xFF16, val),
       _ => {}
     }
+  }
+
+  pub fn get_samples(&mut self) -> Vec<f32> {
+    core::mem::take(&mut self.samples)
   }
 }
