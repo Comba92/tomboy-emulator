@@ -19,11 +19,13 @@ bitflags! {
 struct Dma {
 	start: u16,
 	offset: u16,
+  delay: bool,
 }
 impl Dma {
 	pub fn init(&mut self, val: u8) {
 		self.start = (val as u16) << 8;
 		self.offset = 160;
+    self.delay = true;
 	}
 
   pub fn current(&self) -> u16 {
@@ -58,6 +60,7 @@ pub struct Bus {
 
   pub inte: IFlags,
   pub intf: InterruptFlags,
+  tcycles: usize,
 }
 
 enum BusTarget {
@@ -112,23 +115,30 @@ impl Bus {
       joypad: Joypad::new(intf.clone()),
       inte: IFlags::empty(), 
       intf,
+      tcycles: 0,
     }
   }
 
   pub fn tick(&mut self) {
+    self.tcycles += 1;
     for _ in 0..4 { self.ppu.tick(); }
     for _ in 0..4 { self.timer.tick(); }
   }
 
+  pub fn has_pending_interrupts(&self) -> bool {
+    !(self.inte & self.intf()).is_empty()
+  }
+
   pub fn handle_dma(&mut self) {
-    if self.dma.is_transferring() {
+    if self.dma.delay {
+      self.dma.delay = false;
+    } else if self.dma.is_transferring() {
       let addr = self.dma.current();
       let val = self.read(addr);
       // self.write(0xFE00 + self.dma.offset(), val);
       self.ppu.oam[self.dma.offset() as usize] = val;
 
       self.dma.advance();
-      // self.tick();
     }
   }
 
@@ -169,7 +179,7 @@ impl Bus {
       Ppu => self.ppu.write(addr, val),
       OamDma => {
         self.dma.init(val);
-        self.tick();
+        for _ in 0..4 { self.tick(); }
       }
       Timer => self.timer.write(addr, val),
       IF => self.intf.set(IFlags::from_bits_retain(val)),

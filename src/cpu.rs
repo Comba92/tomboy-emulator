@@ -37,6 +37,7 @@ pub struct Cpu {
 	pub ime: bool,
 	ime_to_set: bool,
 	halted: bool,
+	halt_bug: bool,
 	
 	pub mcycles: usize,
 	pub bus: Bus,
@@ -62,6 +63,7 @@ impl Cpu {
 			ime: false,
 			ime_to_set: false,
 			halted: false,
+			halt_bug: false,
 			mcycles: 0,
 			bus: Bus::new(cart),
 		}
@@ -128,8 +130,8 @@ impl Cpu {
 	}
 
 	pub fn read(&mut self, addr: u16) -> u8 {
-		let res = self.peek(addr);
 		self.tick();
+		let res = self.peek(addr);
 		res
 	}
 	fn read16(&mut self, addr: u16) -> u16 {
@@ -137,8 +139,8 @@ impl Cpu {
 	}
 
 	pub fn write(&mut self, addr: u16, val: u8) {
-		self.bus.write(addr, val);
 		self.tick();
+		self.bus.write(addr, val);
 	}
 	fn write16(&mut self, addr: u16, val: u16){
 		let [lo, hi] = val.to_le_bytes();
@@ -156,7 +158,6 @@ impl Cpu {
 		])
 	}
 	fn stack_push(&mut self, val: u16) {
-		self.tick();
 		self.write16(self.sp.wrapping_sub(2), val);
 		self.sp = self.sp.wrapping_sub(2);
 	}
@@ -169,19 +170,25 @@ impl Cpu {
 	fn tick(&mut self) {
 		self.mcycles += 1;
 		self.bus.tick();
+		self.bus.handle_dma();
+	}
+
+	fn halt_tick(&mut self) {
+		self.mcycles += 1;
+		self.bus.tick();
 	}
 
 	pub fn step(&mut self) {
 		if self.halted {
-			let inte = self.bus.inte;
-			let intf = self.bus.intf();
-			
-			if !(inte & intf).is_empty() { self.halted = false; }
-			else { self.tick(); }
-			
-			return;
+			if self.bus.has_pending_interrupts() {
+				self.halted = false;
+			}
+			else {
+				self.halt_tick();			
+				return;
+			}
 		}
-				
+
 		if self.ime_to_set {
 			self.ime = true;
 			self.ime_to_set = false;
@@ -189,10 +196,12 @@ impl Cpu {
 			self.handle_interrupts();
 		}
 
-		self.bus.handle_dma();
-		
 		let opcode = self.pc_fetch();
-		
+		if self.halt_bug {
+			self.halt_bug = false;
+			self.pc = self.pc.wrapping_sub(1);
+		}
+
 		if opcode == 0xCB {
 			let opcode = self.pc_fetch();
 			let instr = &INSTRUCTIONS[256 + opcode as usize];
@@ -235,11 +244,6 @@ impl Cpu {
 				_ => unreachable!(),
 			};
 
-			intf.remove(*int);
-			self.bus.set_intf(intf);
-
-			self.ime = false;
-
 			// 2 wait states are executed
 			self.tick();
 			self.tick();
@@ -247,6 +251,11 @@ impl Cpu {
 			self.stack_push(self.pc);
 			self.pc = addr;
 			self.tick();
+
+			intf.remove(*int);
+			self.bus.set_intf(intf);
+
+			self.ime = false;
 		}
 	}
 
@@ -442,6 +451,7 @@ impl Cpu {
 
 	fn push(&mut self, ops: &[InstrTarget]) {
 		let val = self.get_operand16(&ops[0]);
+		self.tick();
 		self.stack_push(val);
 	}
 
@@ -677,10 +687,9 @@ impl Cpu {
 			self.set_hcarry(self.sp as u8, offset as u8);
 		}
 		
+		self.tick();
+		self.tick();
 		self.sp = res as u16;
-
-		self.tick();
-		self.tick();
 	}
 
 	fn shift_acc<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, f: FS, carry: FB) {
@@ -824,18 +833,18 @@ impl Cpu {
 
 	fn call(&mut self, ops: &[InstrTarget]) {
 		let addr = self.get_operand16(&ops[0]);
+		self.tick();
 		self.stack_push(self.pc);
 		self.pc = addr;
-		self.tick();
 	}
 
 	fn callc(&mut self, ops: &[InstrTarget]) {
 		let addr = self.get_operand16(&ops[1]);
 
 		if self.get_cond(&ops[0]) {
+			self.tick();
 			self.stack_push(self.pc);
 			self.pc = addr;
-			self.tick();
 		}
 	}
 
@@ -867,11 +876,15 @@ impl Cpu {
 	fn di(&mut self) { self.ime = false; self.ime_to_set = false; }
 	fn ei(&mut self) { self.ime_to_set = true; }
 
-	fn stop(&mut self, _ops: &[InstrTarget]) {  } // TODO
+	// TODO
+	fn stop(&mut self, _ops: &[InstrTarget]) {
+		eprint!("Stop instruction not implemented")
+	}
+
 	fn halt(&mut self) {
-		if !self.ime && !(self.bus.inte & self.bus.intf()).is_empty() {
-			self.halted = false;
-			self.pc = self.pc.wrapping_sub(1);
+		// halt bug
+		if !self.ime {
+			self.halt_bug = self.bus.has_pending_interrupts();
 		} else {
 			self.halted = true;
 		}
