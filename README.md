@@ -1,10 +1,16 @@
+# What's done
+- [x] CPU
+- [x] Mbc1, Mbc2, Mbc3, Mbc5 (the most important)
+
 # TODO
 - Window totally broken
-- Window edge cases
 - Mole mania won't start
 - LYC interrupt (ok?)
 
+- Bootrom loading
 - Serial port (some games wont work correctly without it)
+- Mbc3 RTC
+- Apu
 
 # Resources
 - https://gbdev.io/pandocs/
