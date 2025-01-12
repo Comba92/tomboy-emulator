@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{bus::{self, InterruptFlags}, frame::FrameBuffer, nth_bit};
+use crate::{bus::{self, IFlags, InterruptFlags}, frame::FrameBuffer, nth_bit};
 use bitflags::bitflags;
 
 bitflags! {
@@ -35,7 +35,7 @@ const VRAM2: u16 = 0x9000;
 const MAP0: u16 = 0x9800;
 const MAP1: u16 = 0x9C00; 
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq)]
 enum PpuMode {
   Hblank, // Mode0
   Vblank, // Mode1
@@ -145,6 +145,7 @@ pub struct Ppu {
 
   tcycles: usize,
   intf: InterruptFlags,
+  stat_int_flag: bool,
 }
 
 impl Ppu {
@@ -176,6 +177,7 @@ impl Ppu {
 
       tcycles: Default::default(), 
       intf,
+      stat_int_flag: false,
     }
   }
 
@@ -186,8 +188,6 @@ impl Ppu {
         self.frame_ready = Some(());
       }
     }
-    
-    let old_stat = self.stat;
 
     self.tcycles += 1;
     if self.tcycles > 456 {
@@ -214,7 +214,8 @@ impl Ppu {
           self.fetcher.reset();
           
           self.mode = Hblank;
-          self.send_lcd_int(Stat::mode0_int);
+          // self.send_lcd_int(Stat::mode0_int);
+          self.send_stat_int();
         } else {
           self.fetcher_step();
         }
@@ -225,17 +226,21 @@ impl Ppu {
             
             self.mode = Vblank;
             self.send_vblank_int();
-            self.send_lcd_int(Stat::mode1_int);
+            // self.send_lcd_int(Stat::mode1_int);
+            self.send_stat_int();
           } else {
             self.mode = OamScan;
-            self.send_lcd_int(Stat::mode2_int);
+            // self.send_lcd_int(Stat::mode2_int);
+            self.send_stat_int();
           };
         }
       }
       Vblank => {
         if self.ly >= 154 {
           self.mode = OamScan;
-          self.send_lcd_int(Stat::mode2_int);
+          // self.send_lcd_int(Stat::mode2_int);
+          self.send_stat_int();
+          
           self.oam_enabled = false;
 
           self.ly = 0;
@@ -244,11 +249,13 @@ impl Ppu {
       }
     };
 
-    // TODO: this works, but not totally correct
-    let lyc = self.ly == self.lyc;
-    if old_stat != self.stat || self.stat.contains(Stat::lyc_eq_ly) != lyc {
-      self.send_lyc_int();
-    }
+    self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
+    // let lyc = self.ly == self.lyc;
+    // self.stat.insert(Stat::lyc_eq_ly);
+    // if old_stat != self.stat || self.stat.contains(Stat::lyc_eq_ly) != lyc {
+    //   // self.send_lyc_int();
+    //   // self.send_stat_int();
+    // }
   }
 
   pub fn read(&self, addr: u16) -> u8 {
@@ -279,19 +286,19 @@ impl Ppu {
   pub fn write(&mut self, addr: u16, val: u8) {
     match addr {
       0xFF40 => {
-        let old_ctrl = self.ctrl;
+        let old_ctrl = self.ctrl.clone();
         self.ctrl = Ctrl::from_bits_retain(val);
 
         // lcd enabling/disabling logic
-        if !old_ctrl.contains(Ctrl::lcd_enabled) && self.ctrl.contains(Ctrl::lcd_enabled) {
+        if old_ctrl.contains(Ctrl::lcd_enabled) != self.ctrl.contains(Ctrl::lcd_enabled) {
           // it is turned on
           if self.ctrl.contains(Ctrl::lcd_enabled) {
             self.tcycles = 80;
             self.ly = 0;
             self.wnd_line = 0;
             self.mode = PpuMode::DrawingPixels;
-            self.fetcher.reset();
-
+            self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
+            self.send_stat_int();
           // it is turned off
           } else {
             self.tcycles = 0;
@@ -300,6 +307,9 @@ impl Ppu {
             self.mode = PpuMode::Hblank;
             self.fetcher.reset();
             self.lcd.reset();
+
+            self.vram_enabled = true;
+            self.oam_enabled = true;
           }
         }
       }
@@ -312,7 +322,8 @@ impl Ppu {
       0xFF43 => self.scx = val,
       0xFF45 => {
         self.lyc = val;
-        self.send_lyc_int();
+        // self.send_lyc_int();
+        self.send_stat_int();
       }
       0xFF4A => self.wy = val,
       0xFF4B => self.wx = val,
@@ -341,6 +352,21 @@ impl Ppu {
     }
   }
 
+  fn send_stat_int(&mut self) {
+    let int = self.is_lcd_enabled() && (
+      (self.stat.contains(Stat::lyc_int) && self.stat.contains(Stat::lyc_eq_ly))
+      || (self.stat.contains(Stat::mode0_int) && self.mode == PpuMode::Hblank)
+      || (self.stat.contains(Stat::mode1_int) && self.mode == PpuMode::Vblank)
+      || (self.stat.contains(Stat::mode2_int) && self.mode == PpuMode::OamScan)
+    );
+
+    if int && !self.stat_int_flag {
+      bus::send_interrupt(&self.intf, IFlags::lcd);
+    }
+
+    self.stat_int_flag = int;
+  }
+
   fn send_lyc_int(&mut self) {
     self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
 
@@ -363,7 +389,7 @@ impl Ppu {
     }
     self.ly += 1;
 
-    self.send_lyc_int();
+    // self.send_lyc_int();
   }
 
   pub fn tileset_addr(&self, tileset_id: u8) -> u16 {
@@ -446,14 +472,6 @@ impl Ppu {
       
       // Sprite 8x16 tile handling
       let tile_id = if self.ctrl.contains(Ctrl::obj_size) {        
-        // let is_lower = self.ly >= y + 8;
-        // if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE }
-
-        // match obj.y_flip {
-        //   false => if is_lower { obj.tile_id | 0x01 } else { obj.tile_id & 0xFE },
-        //   true  => if is_lower { obj.tile_id & 0xFE } else { obj.tile_id | 0x01 },
-        // }
-
         obj.tile_id & 0xFE
       } else { obj.tile_id };
 
