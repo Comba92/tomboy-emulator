@@ -1,12 +1,10 @@
 # What's done
 - [x] CPU
 - [x] Mbc1, Mbc2, Mbc3, Mbc5 (the most important)
+- [x] PPU seems ok, no obj fifo emulation
 
 # TODO
-- Window totally broken
-- Mole mania won't start
-- LYC interrupt (ok?)
-
+- Obj fifo emulation
 - Bootrom loading
 - Serial port (some games wont work correctly without it)
 - Mbc3 RTC

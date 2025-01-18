@@ -4,10 +4,11 @@ use crate::bus;
 
 bitflags! {
   pub struct Flags: u8 {
-    const start_down = 0b00_1000;
-    const select_up  = 0b00_0100;
-    const b_left     = 0b00_0010;
-    const a_right    = 0b00_0001;
+    const unused     = 0b1111_0000;
+    const start_down = 0b0000_1000;
+    const select_up  = 0b0000_0100;
+    const b_left     = 0b0000_0010;
+    const a_right    = 0b0000_0001;
   }
 }
 
@@ -55,12 +56,14 @@ impl Joypad {
   }
 
   pub fn read(&self) -> u8 {
-    match self.selected {
-      JoypadSelect::Both => 0xFF,
+    let res = match self.selected {
+      JoypadSelect::Both => 0,
       JoypadSelect::Dpad => self.dpad.bits() & 0b1111,
       JoypadSelect::Buttons => self.buttons.bits() & 0b1111,
-      _ => 0xFF,
-    }
+      _ => 0x0F,
+    };
+
+    res | Flags::unused.bits()
   }
 
   pub fn write(&mut self, val: u8) {

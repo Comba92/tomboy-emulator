@@ -88,7 +88,7 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
     0xFF40..=0xFF4B => (Ppu, addr),
     0xFF80..=0xFFFE => (HRam, addr - 0xFF80),
     0xFFFF => (IE, addr),
-    0xFF00..=0xFFFF => (NoImpl, addr),
+    _ => (NoImpl, addr),
   }
 }
 
@@ -123,6 +123,7 @@ impl Bus {
     self.tcycles += 1;
     for _ in 0..4 { self.ppu.tick(); }
     for _ in 0..4 { self.timer.tick(); }
+    for _ in 0..4 { self.apu.tick(); }
   }
 
   pub fn has_pending_interrupts(&self) -> bool {
@@ -153,13 +154,13 @@ impl Bus {
       Oam => self.ppu.oam[addr as usize],
       Joypad => self.joypad.read(),
       Serial => self.serial.read(addr),
-      // Apu => self.apu.read(addr),
+      Apu => self.apu.read(addr),
       Ppu => self.ppu.read(addr),
       Timer => self.timer.read(addr),
       IF => (self.intf.get() | IFlags::unused).bits(),
       HRam => self.hram[addr as usize],
       IE => self.inte.bits(),
-      _ => 0xFF,
+      _ => 0,
     }
   }
 
@@ -182,9 +183,9 @@ impl Bus {
         for _ in 0..4 { self.tick(); }
       }
       Timer => self.timer.write(addr, val),
-      IF => self.intf.set(IFlags::from_bits_retain(val)),
+      IF => self.intf.set(IFlags::from_bits_truncate(val)),
       HRam => self.hram[addr as usize] = val,
-      IE => self.inte = IFlags::from_bits_retain(val),
+      IE => self.inte = IFlags::from_bits_truncate(val),
       NoImpl => {},
     }
   }

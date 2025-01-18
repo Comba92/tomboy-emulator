@@ -58,7 +58,8 @@ struct Fetcher {
   x: u8,
   wnd_hit: bool,
   pixel_x: u8,
-  scroll_x: u8,
+  bg_scroll_x: u8,
+  wnd_scroll_x: u8,
   
   tile_y: u8,
   tileset_id: u8,
@@ -69,7 +70,7 @@ struct Fetcher {
 
 impl Default for Fetcher {
   fn default() -> Self {
-    Self { state: Default::default(), obj_visible: Default::default(), bg_fifo: Default::default(), obj_scanline: [const {None}; 160], should_do_step: Default::default(), x: Default::default(), wnd_hit: Default::default(), pixel_x: Default::default(), scroll_x: Default::default(), tile_y: Default::default(), tileset_id: Default::default(), tileset_addr: Default::default(), tile_lo: Default::default(), tile_hi: Default::default() }
+    Self { state: Default::default(), obj_visible: Default::default(), bg_fifo: Default::default(), obj_scanline: [const {None}; 160], should_do_step: Default::default(), x: Default::default(), wnd_hit: Default::default(), pixel_x: Default::default(), bg_scroll_x: Default::default(), wnd_scroll_x: Default::default(), tile_y: Default::default(), tileset_id: Default::default(), tileset_addr: Default::default(), tile_lo: Default::default(), tile_hi: Default::default() }
   }
 }
 
@@ -79,7 +80,8 @@ impl Fetcher {
     self.x = 0;
     self.wnd_hit = false;
     self.pixel_x = 0;
-    self.scroll_x = 0;
+    self.bg_scroll_x = 0;
+    self.wnd_scroll_x = 0;
     self.should_do_step = false;
     self.state = FetcherState::Tile;
   }
@@ -189,6 +191,8 @@ impl Ppu {
       }
     }
 
+    let old_stat = self.stat;
+
     self.tcycles += 1;
     if self.tcycles > 456 {
       self.tcycles = 0;
@@ -249,12 +253,14 @@ impl Ppu {
       }
     };
 
-    self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
+    self.stat.set(Stat::lyc_eq_ly, self.lyc == self.ly);
+    self.send_stat_int();
+    // self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
     // let lyc = self.ly == self.lyc;
     // self.stat.insert(Stat::lyc_eq_ly);
-    // if old_stat != self.stat || self.stat.contains(Stat::lyc_eq_ly) != lyc {
+    // if old_stat != self.stat {
     //   // self.send_lyc_int();
-    //   // self.send_stat_int();
+    //   self.send_stat_int();
     // }
   }
 
@@ -299,6 +305,7 @@ impl Ppu {
             self.mode = PpuMode::DrawingPixels;
             self.stat.set(Stat::lyc_eq_ly, self.ly == self.lyc);
             self.send_stat_int();
+            // self.send_stat_int();
           // it is turned off
           } else {
             self.tcycles = 0;
@@ -323,6 +330,8 @@ impl Ppu {
       0xFF45 => {
         self.lyc = val;
         // self.send_lyc_int();
+        // self.send_stat_int();
+        self.stat.set(Stat::lyc_eq_ly, self.lyc == self.ly);
         self.send_stat_int();
       }
       0xFF4A => self.wy = val,
@@ -389,6 +398,8 @@ impl Ppu {
     }
     self.ly += 1;
 
+    self.stat.set(Stat::lyc_eq_ly, self.lyc == self.ly);
+    self.send_stat_int();
     // self.send_lyc_int();
   }
 
@@ -516,6 +527,24 @@ impl Ppu {
   }
 
   fn fetcher_step(&mut self) {
+    if !self.fetcher.wnd_hit && self.ctrl.contains(Ctrl::wnd_enabled) 
+      && self.fetcher.pixel_x + 7 >= self.wx
+      && self.ly >= self.wy
+    {
+      println!("{}", self.wx);
+      self.fetcher.wnd_hit = true;
+      self.fetcher.x = 0;
+      
+      if self.wx < 7 {
+        self.fetcher.wnd_scroll_x = 7- self.wx;
+      }
+
+      self.fetcher.bg_fifo.clear();
+      self.fetcher.should_do_step = false;
+      self.fetcher.state = FetcherState::Tile;
+      return;
+    }
+
     if self.fetcher.should_do_step {
       match self.fetcher.state {
         FetcherState::Tile => {
@@ -587,8 +616,13 @@ impl Ppu {
 
     // we should pop discarding the scrolling pixels
     let bg_color = self.fetcher.bg_fifo.pop_front().unwrap();
-    if self.fetcher.scroll_x < self.scx % 8 {
-      self.fetcher.scroll_x += 1;
+    
+    if self.fetcher.wnd_scroll_x > 0 {
+      self.fetcher.wnd_scroll_x -= 1;
+      return;
+    }
+    if !self.fetcher.wnd_hit && self.fetcher.bg_scroll_x < self.scx % 8 {
+      self.fetcher.bg_scroll_x += 1;
       return;
     }
 
@@ -607,16 +641,5 @@ impl Ppu {
 
     self.lcd.set_pixel(self.fetcher.pixel_x as usize, self.ly as usize, color);
     self.fetcher.pixel_x += 1;
-
-    if !self.fetcher.wnd_hit && self.ctrl.contains(Ctrl::wnd_enabled) 
-      && self.fetcher.pixel_x + 7 >= self.wx
-      && self.ly >= self.wy
-    {
-      self.fetcher.wnd_hit = true;
-      self.fetcher.x = 0;
-      self.fetcher.bg_fifo.clear();
-      self.fetcher.should_do_step = false;
-      self.fetcher.state = FetcherState::Tile;
-    }
   }
 }
