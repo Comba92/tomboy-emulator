@@ -176,13 +176,18 @@ impl Bus {
       Unusable => {}
       Joypad => self.joypad.write(val),
       Serial => self.serial.write(addr, val),
-      Apu => self.apu.write(addr, val),
+      Apu =>  self.apu.write(addr, val),
       Ppu => self.ppu.write(addr, val),
       OamDma => {
         self.dma.init(val);
         for _ in 0..4 { self.tick(); }
       }
-      Timer => self.timer.write(addr, val),
+      Timer => {
+        self.timer.write(addr, val);
+        if self.timer.div == 0 {
+          self.apu.tcycles = 0;
+        }
+      }
       IF => self.intf.set(IFlags::from_bits_truncate(val)),
       HRam => self.hram[addr as usize] = val,
       IE => self.inte = IFlags::from_bits_truncate(val),

@@ -531,7 +531,6 @@ impl Ppu {
       && self.fetcher.pixel_x + 7 >= self.wx
       && self.ly >= self.wy
     {
-      println!("{}", self.wx);
       self.fetcher.wnd_hit = true;
       self.fetcher.x = 0;
       

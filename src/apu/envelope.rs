@@ -45,7 +45,7 @@ impl Envelope {
 
   pub fn write(&mut self, val: u8) {
     self.period = val & 0b111;
-    self.direction = val >> 3 != 0;
+    self.direction = (val >> 3) != 0;
     self.volume_initial = val >> 4;
   }
 }

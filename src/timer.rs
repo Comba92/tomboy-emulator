@@ -17,7 +17,7 @@ bitflags! {
 }
 
 pub struct Timer {
-  div: u16,
+  pub div: u16,
   tima: u8,
   tima_clock: u16,
   tima_overflow_delay: u8,

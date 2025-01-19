@@ -1,20 +1,11 @@
-use bitfield_struct::bitfield;
+use noise::Noise;
 use square::Square;
 
 use crate::nth_bit;
 
 mod envelope;
 mod square;
-
-#[bitfield(u16)]
-struct Period {
-  #[bits(8)]
-  lo: u8,
-  #[bits(3)]
-  hi: u8,
-  #[bits(5)]
-  __: u8,
-}
+mod noise;
 
 #[derive(Default)]
 pub struct Apu {
@@ -24,17 +15,18 @@ pub struct Apu {
   volumef_l: f32,
   volumef_r: f32,
 
-  tcycles: usize,
-  frame_count: u8,
+  pub tcycles: usize,
 
   square1: Square,
   square2: Square,
+  noise: Noise, 
 
   samples: Vec<f32>,
   samples_cycles: f64
 }
 
-const CYCLES_PER_SAMPLE: f64 = 4194304.0 / 44100.0;
+const CPU_CYCLES: usize = 4194304;
+const CYCLES_PER_SAMPLE: f64 = CPU_CYCLES as f64 / 44100.0;
 
 impl Apu {
   pub fn tick(&mut self) {
@@ -47,9 +39,10 @@ impl Apu {
       } else {
         let (sq1_l, sq1_r) = self.square1.get_sample();
         let (sq2_l, sq2_r) = self.square2.get_sample();
+        let (n_l, n_r) = self.noise.get_sample();
 
-        let out_l = ((sq1_l + sq2_l)) * self.volumef_l;
-        let out_r = ((sq1_r + sq2_r)) * self.volumef_r;
+        let out_l = ((sq1_l + sq2_l + n_l) / 3.0) * 1.0;
+        let out_r = ((sq1_r + sq2_r + n_r) / 3.0) * 1.0;
 
         self.samples.push(out_l as f32);
         self.samples.push(out_r as f32);
@@ -60,60 +53,35 @@ impl Apu {
 
     if !self.apu_enabled { return; }
 
-    self.square1.tick_period();
-    self.square2.tick_period();
-
-    // length
-    if self.tcycles % 16384 == 0 {
-      // self.square1.tick_length();
-      // self.square2.tick_length();
+    if self.tcycles % 4 == 0 {
+      self.square1.tick_period();
+      self.square2.tick_period();
+      self.noise.tick_period();
     }
 
-    if self.tcycles % 32768 == 0 {
-      // self.square1.tick_sweep();
+    if self.tcycles % CPU_CYCLES/256 == 0 {
+      self.square1.tick_length();
+      self.square2.tick_length();
+      self.noise.tick_length();
     }
 
-    // env
-    if self.tcycles >= 65536 {
-      self.tcycles = 0;
+    if self.tcycles % CPU_CYCLES/128 == 0 {
+      self.square1.tick_sweep();
+    }
 
-      // self.square1.env.tick();
-      // self.square2.env.tick();
+    if self.tcycles % CPU_CYCLES/64 == 0 {
+      self.square1.env.tick();
+      self.square2.env.tick();
+      self.noise.env.tick();
     }
 
     self.tcycles += 1;
-
-    // if self.tcycles >= 8192 {
-    //   self.tcycles = 0;
-    //   self.frame_count = (self.frame_count + 1) % 8;
-
-    //   // The following events occur every N DIV-APU ticks:
-    //   // Envelope sweep	8	64 Hz
-    //   // Sound length	2	256 Hz
-    //   // CH1 freq sweep	4	128 Hz
-
-    //   if self.frame_count == 7 {
-    //     self.square1.env.tick();
-    //     self.square2.env.tick();
-    //   }
-
-    //   if self.frame_count % 2 == 0 {
-    //     self.square1.tick_length();
-    //     self.square2.tick_length();
-
-    //     if self.frame_count == 2 || self.frame_count == 6 {
-    //       self.square1.tick_sweep();
-    //     }
-    //   }
-    // } else {
-    //   self.tcycles += 1;
-    // }
   }
 
   pub fn read(&mut self, addr: u16) -> u8 {
-    if !self.apu_enabled && addr != 0xFF26 {
-      return 0xFF;
-    }
+    // if !self.apu_enabled && addr != 0xFF26 {
+    //   return 0xFF;
+    // }
 
     match addr {
       // NR50
@@ -127,11 +95,15 @@ impl Apu {
       // NR51
       0xFF25 => {
         let mut res = 0;
-        res |=  self.square1.panning_r as u8;
+        res |= (self.square1.panning_r as u8) << 0;
         res |= (self.square2.panning_r as u8) << 1;
+        // res |= (self.wave.panning_r as u8) << 2;
+        res |= (self.noise.panning_r as u8) << 3;
         res |= (self.square1.panning_l as u8) << 4;
         res |= (self.square2.panning_l as u8) << 5;
-        // TODO: read channels panning
+        // res |= (self.wave.panning_l as u8) << 7;
+        res |= (self.noise.panning_l as u8) << 7;
+
         res
       }
       // NR52
@@ -139,14 +111,18 @@ impl Apu {
         let mut res = 0;
         res |= (self.apu_enabled as u8) << 7;
         res |= 0b0111_0000; // open bus
+
         res |=  self.square1.enabled as u8;
         res |= (self.square2.enabled as u8) << 1;
-        // TODO: check channels active
+        // res |= (self.wave.enabled as u8) << 2;
+        res |= (self.noise.enabled as u8) << 3;
+        
         res
       }
 
       0xFF10..=0xFF14 => self.square1.read(addr - 0xFF10),
-      0xFF16..=0xFF19 => self.square2.read(addr - 0xFF16),
+      0xFF15..=0xFF19 => self.square2.read(addr - 0xFF15),
+      0xFF20..=0xFF23 => self.noise.read(addr),
       _ => 0xFF,
     }
   }
@@ -164,37 +140,51 @@ impl Apu {
         self.volume_r = ((val >> 0) & 0b111) + 1;
         
         // audio has to be normalized
-        self.volumef_l = self.volume_l as f32 / 8.0;
-        self.volumef_r = self.volume_r as f32 / 8.0;
+        self.volumef_l = (self.volume_l as f32 / 4.5) - 1.0;
+        self.volumef_r = (self.volume_r as f32 / 4.5) - 1.0;
       }
       // NR51
       0xFF25 => {
         self.square1.panning_r = nth_bit(val, 0);
         self.square2.panning_r = nth_bit(val, 1);
+        // self.wave.panning_r = nth_bit(val, 2);
+        self.noise.panning_r   = nth_bit(val, 3);
 
         self.square1.panning_l = nth_bit(val, 4);
         self.square2.panning_l = nth_bit(val, 5);
-        // TODO: set channels panning
+        // self.wave.panning_l = nth_bit(val, 6);
+        self.noise.panning_l   = nth_bit(val, 7);
       }
+      
       // NR52
       0xFF26 => {
         self.apu_enabled = nth_bit(val, 7);
         if !self.apu_enabled {
-          self.square1.panning_l = false;
-          self.square1.panning_r = false;
-          self.square2.panning_l = false;
-          self.square2.panning_r = false;
+          self.square1.disable();
+          self.square2.disable();
+          self.noise.disable();
 
-          self.volume_l = 1;
-          self.volume_r = 1;
-          self.volumef_l = 1.0;
-          self.volumef_r = 1.0;
+          self.volume_l = 0;
+          self.volume_r = 0;
+          self.volumef_l = 0.0;
+          self.volumef_r = 0.0;
+
+          self.square1.panning_r = false;
+          self.square2.panning_r = false;
+          // self.wave.panning_r = false;
+          self.noise.panning_r   = false;
+
+          self.square1.panning_l = false;
+          self.square2.panning_l = false;
+          // self.wave.panning_l = false;
+          self.noise.panning_l   = false;
         }
-        // TODO: if apu is disabled, clear all apu registers, except wave ram and div apu
       }
 
       0xFF10..=0xFF14 => self.square1.write(addr - 0xFF10, val),
-      0xFF16..=0xFF19 => self.square2.write(addr - 0xFF16, val),
+      // BE CAREFUL HERE: square2 doesn't have the sweep register
+      0xFF15..=0xFF19 => self.square2.write(addr - 0xFF15, val),
+      0xFF20..=0xFF23 => self.noise.write(addr, val),
       _ => {}
     }
   }
