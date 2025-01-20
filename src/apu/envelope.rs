@@ -16,7 +16,7 @@ impl Envelope {
       
       if self.timer == 0 {
         self.timer = self.period;
-        if self.volume < 0xF && self.direction {
+        if self.volume < 15 && self.direction {
           self.volume += 1;
         } else if self.volume > 0 && !self.direction {
           self.volume -= 1;
@@ -47,5 +47,6 @@ impl Envelope {
     self.period = val & 0b111;
     self.direction = (val >> 3) != 0;
     self.volume_initial = val >> 4;
+    self.volume = self.volume_initial;
   }
 }

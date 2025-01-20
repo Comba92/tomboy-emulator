@@ -2,7 +2,6 @@ use crate::nth_bit;
 
 use super::envelope::Envelope;
 
-#[derive(Default)]
 pub(super) struct Noise {
   pub enabled: bool,
   pub panning_l: bool,
@@ -20,6 +19,11 @@ pub(super) struct Noise {
   lfsr: u16,
   lfsr_7bit: bool,
 }
+impl Default for Noise {
+  fn default() -> Self {
+    Self { enabled: Default::default(), panning_l: Default::default(), panning_r: Default::default(), env: Default::default(), length_initial: Default::default(), length_enabled: Default::default(), length_timer: Default::default(), div: Default::default(), timer: 8, shift: Default::default(), lfsr: Default::default(), lfsr_7bit: Default::default() }
+  }
+}
 
 impl Noise {
   pub fn disable(&mut self) {
@@ -28,6 +32,7 @@ impl Noise {
     } else { self.div << 4 };
 
     self.timer = div_code << self.shift;
+    self.enabled = false;
   }
 
   pub fn get_sample(&self) -> (f32, f32) {

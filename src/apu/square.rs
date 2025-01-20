@@ -1,6 +1,6 @@
 use crate::nth_bit;
 
-use super::envelope::Envelope;
+use super::{envelope::Envelope, Length};
 
 const SQUARE_DUTIES: [[u8; 8]; 4] = [
   // [1,1,1,1,1,1,1,0],
@@ -21,13 +21,11 @@ pub(super) struct Square {
 
   pub env: Envelope,
   pub sweep: Sweep,
+  pub length: Length,
 
   wave_duty: u8,
   duty: u8,
-  length_initial: u8,
-  length_timer: u8,
-  length_enabled: bool,
-
+  
   period_initial: u16,
   timer: u16,
 }
@@ -45,6 +43,7 @@ pub(super) struct Sweep {
 impl Square {
   pub fn disable(&mut self) {
     self.timer = 2048;
+    self.enabled = false;
   }
 
   pub fn get_sample(&self) -> (f32, f32) {
@@ -73,13 +72,8 @@ impl Square {
   }
 
   pub fn tick_length(&mut self) {
-    if self.length_enabled && self.length_timer > 0 {
-      self.length_timer -= 1;
-
-      if self.length_timer == 0 {
-        self.enabled = false;
-      }
-    }
+    self.length.tick();
+    self.enabled = self.enabled && self.length.is_enabled();
   }
 
   pub fn tick_sweep(&mut self) {
@@ -95,9 +89,10 @@ impl Square {
       if self.sweep.enabled && self.sweep.period > 0 {
         let freq = self.sweep_freq_get_and_check();
 
-        if self.enabled && self.sweep.shift > 0 {
+        if freq < 2048 && self.sweep.shift > 0 {
           self.sweep.shadow = freq;
-          self.timer = freq;
+          self.period_initial = 2048 - freq;
+          self.sweep_freq_get_and_check();
         }
       }
     }
@@ -132,7 +127,7 @@ impl Square {
       }
       1 => (self.duty as u8) << 6 | 0b0011_1111,
       2 => self.env.read(),
-      4 => (self.length_enabled as u8) << 6 | 0b1011_1111,
+      4 => (self.length.enabled as u8) << 6 | 0b1011_1111,
       _ => unreachable!(),
     }
   }
@@ -144,31 +139,28 @@ impl Square {
         self.sweep.period = (val >> 4) & 0b111;
       }
       1 => {
-        self.length_initial = 64 - (val & 0b11_1111);
+        self.length.initial = 64 - (val & 0b11_1111) as u16;
         self.wave_duty = val >> 6;
       }
       2 => {
         self.env.write(val);
-        self.enabled = self.env.is_dac_enabled();
+        self.enabled = self.enabled && self.env.is_dac_enabled();
       }
       3 => self.period_initial = (self.period_initial & 0xF00) | (val as u16),
       4 => {
         self.period_initial = (self.period_initial & 0x0FF) | ((val as u16 & 0b111) << 8);
-        self.length_enabled = nth_bit(val, 6);
+        self.length.enabled = nth_bit(val, 6);
         
         // Trigger
-        if self.env.is_dac_enabled() && nth_bit(val, 7) {
-          if self.length_timer == 0 {
-            self.length_timer = self.length_initial;
-          }
-          
+        if nth_bit(val, 7) {          
           self.timer = 2048 - self.period_initial;
           self.duty = 0;
-
+          
+          self.length.trigger();
           self.env.trigger();
           self.enabled = self.env.is_dac_enabled();
 
-          self.sweep.shadow = self.timer;
+          self.sweep.shadow = self.period_initial;
           self.sweep.timer = self.sweep.period;
           self.sweep.enabled = self.sweep.period > 0 || self.sweep.shift > 0;
           if self.sweep.shift > 0 {
