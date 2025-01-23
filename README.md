@@ -11,6 +11,7 @@
 - Apu
 
 # Resources
+- https://jsgroth.dev/blog/categories/emulation/
 - https://gbdev.io/pandocs/
 - https://gekkio.fi/files/gb-docs/gbctr.pdf
 - https://github.com/AntonioND/giibiiadvance/blob/master/docs/TCAGBD.pdf
