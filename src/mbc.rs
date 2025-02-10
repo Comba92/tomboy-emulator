@@ -18,9 +18,13 @@ pub fn get_mbc(header: &CartHeader) -> Result<Box<dyn Mapper>, String> {
 
 pub struct Cart {
   pub header: CartHeader,
-  rom: Vec<u8>,
+  pub rom: Vec<u8>,
   exram: Vec<u8>,
   mbc: Box<dyn Mapper>,
+}
+
+impl Default for Cart {
+  fn default() -> Self { Cart { header: CartHeader::default(), rom: Vec::new(), exram: Vec::new(), mbc: Box::new(NoMbc)} }
 }
 
 impl Cart {
@@ -227,7 +231,7 @@ impl Mapper for Mbc2 {
 }
 
 
-
+#[allow(unused)]
 struct Mbc3 {
   rom_banks: Banking,
   ram_banks: Banking,

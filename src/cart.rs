@@ -1,7 +1,7 @@
 use core::{cmp, hash, str};
 
 #[allow(unused)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct CartHeader {
     pub cart_type: &'static str,
     pub mapper_code: u8,
@@ -26,10 +26,10 @@ const NINTENDO_LOGO: [u8; 48] = [
     0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
 ];
 
-#[derive(Debug, Clone)]
-pub enum CgbMode { Monochrome, CgbEnhanced, ColorOnly }
-#[derive(Debug, Clone)]
-pub enum Region { Japan, Overseas } 
+#[derive(Debug, Default, Clone)]
+pub enum CgbMode { #[default] Monochrome, CgbEnhanced, ColorOnly }
+#[derive(Debug, Default, Clone)]
+pub enum Region { Japan, #[default] Overseas } 
 
 fn parse_info<Info: cmp::Eq + hash::Hash, Parsed: Copy>(
     code: Info, 

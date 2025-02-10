@@ -4,7 +4,7 @@ use bitfield_struct::bitfield;
 use bitflags::bitflags;
 
 use crate::{
-	bus::{Bus, IFlags}, lsb, mbc::Cart, mem::{Memory, Ram64kb}, msb
+	bus::{Bus, IFlags}, instr::INSTRUCTIONS, lsb, mbc::Cart, msb
 };
 
 bitflags! {
@@ -26,7 +26,7 @@ pub struct Register16 {
 	pub hi: u8,
 }
 
-pub struct Cpu<M: Memory> {
+pub struct Cpu {
 	pub a: u8,
 	pub f: Flags,
 	pub bc: Register16,
@@ -40,18 +40,18 @@ pub struct Cpu<M: Memory> {
 	halt_bug: bool,
 	
 	pub mcycles: usize,
-	pub bus: M,
+	pub bus: Bus,
 }
 
-impl<M: Memory> core::fmt::Debug for Cpu<M> {
+impl core::fmt::Debug for Cpu {
 		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 				f.debug_struct("Cpu").field("a", &self.a).field("f", &self.f).field("bc", &self.bc).field("de", &self.de).field("hl", &self.hl).field("sp", &self.sp).field("pc", &self.pc).field("ime", &self.ime).field("ime_to_set", &self.ime_to_set).field("cycles", &self.mcycles)
 					.finish()
 		}
 }
 
-impl Cpu<Ram64kb> {
-  pub fn with_ram64kb() -> Self {
+impl Cpu {
+	pub fn new(cart: Cart) -> Self {
 		Self {
 			a: 1,
 			f: Flags::from_bits_truncate(0xB0),
@@ -65,120 +65,10 @@ impl Cpu<Ram64kb> {
 			halted: false,
 			halt_bug: false,
 			mcycles: 0,
-      bus: Ram64kb::default(),
-		}
-	}
-
-	pub fn step(&mut self) {
-		if self.ime_to_set {
-			self.ime = true;
-			self.ime_to_set = false;
-		}
-
-		if self.halted {
-			self.halt_tick();
-			return;
-		}
-
-		let opcode = self.pc_fetch();
-		if self.halt_bug {
-			self.halt_bug = false;
-			self.pc = self.pc.wrapping_sub(1);
-		}
-
-		if opcode == 0xCB {
-			let opcode = self.pc_fetch();
-			self.execute_prefix(opcode);
-		} else { 
-			self.execute_no_prefix(opcode)
-		}
-	}
-}
-
-impl Cpu<Bus> {
-	pub fn new(cart: Cart) -> Self {
-		Self {
-			a: 1,
-			f: Flags::from_bits_truncate(0xB0),
-			bc: Register16::from_bits(0x13),
-			de: Register16::from_bits(0xD8),
-			hl: Register16::from_bits(0x14D),
-			sp: 0xFFFE,
-			pc: 0x0100,
-			ime: false,
-			ime_to_set: false,
-			halted: false,
-			halt_bug: false,
-			mcycles: 0,
 			bus: Bus::new(cart),
 		}
 	}
 
-	pub fn step(&mut self) {
-		if self.ime_to_set {
-			self.ime = true;
-			self.ime_to_set = false;
-		} else if self.ime {
-			self.handle_interrupts();
-		}
-
-		if self.halted {
-			if self.bus.has_pending_interrupts() {
-				self.halted = false;
-			} else {
-				self.halt_tick();			
-				return;
-			}
-		}
-
-		let opcode = self.pc_fetch();
-		if self.halt_bug {
-			self.halt_bug = false;
-			self.pc = self.pc.wrapping_sub(1);
-		}
-
-		if opcode == 0xCB {
-			let opcode = self.pc_fetch();
-			self.execute_prefix(opcode);
-		} else { 
-			self.execute_no_prefix(opcode)
-		}
-	}
-
-	fn handle_interrupts(&mut self) {
-		let mut intf = self.bus.intf();
-
-		let mut pending_ints = (self.bus.inte & intf)
-			.iter().collect::<Vec<_>>();
-		pending_ints.reverse();
-
-		if let Some(int) = pending_ints.first() {
-			let addr = match *int {
-				IFlags::vblank => 0x40,
-				IFlags::lcd    => 0x48,
-				IFlags::timer  => 0x50,
-				IFlags::serial => 0x58, 
-				IFlags::joypad => 0x60,
-				_ => unreachable!(),
-			};
-
-			// 2 wait states are executed
-			self.tick();
-			self.tick();
-
-			self.stack_push(self.pc);
-			self.pc = addr;
-			self.tick();
-
-			intf.remove(*int);
-			self.bus.set_intf(intf);
-
-			self.ime = false;
-		}
-	}
-}
-
-impl<M: Memory> Cpu<M> {
 	fn set_carry(&mut self, val: u16) {
 		self.f.set(Flags::c, val > u8::MAX as u16);
 	}
@@ -215,16 +105,6 @@ impl<M: Memory> Cpu<M> {
 
 	fn set_z(&mut self, val: u8) {
 		self.f.set(Flags::z, val == 0);
-	}
-
-	fn tick(&mut self) {
-		self.mcycles += 1;
-		self.bus.tick();
-	}
-
-	fn halt_tick(&mut self) {
-		self.mcycles += 1;
-		self.bus.halt_tick();
 	}
 
 	pub fn peek(&mut self, addr: u16) -> u8 {
@@ -269,15 +149,99 @@ impl<M: Memory> Cpu<M> {
 		value
 	}
 
+	fn tick(&mut self) {
+		self.mcycles += 1;
+		self.bus.tick();
+		self.bus.handle_dma();
+	}
+
+	fn halt_tick(&mut self) {
+		self.mcycles += 1;
+		self.bus.tick();
+	}
+
+	pub fn step(&mut self) {
+		if self.halted {
+			if self.bus.has_pending_interrupts() {
+				self.halted = false;
+			}
+			else {
+				self.halt_tick();			
+				return;
+			}
+		}
+
+		if self.ime_to_set {
+			self.ime = true;
+			self.ime_to_set = false;
+		} else if self.ime {
+			self.handle_interrupts();
+		}
+
+		let opcode = self.pc_fetch();
+		if self.halt_bug {
+			self.halt_bug = false;
+			self.pc = self.pc.wrapping_sub(1);
+		}
+
+		if opcode == 0xCB {
+			let opcode = self.pc_fetch();
+			self.execute_prefix(opcode);
+		} else { 
+			self.execute_no_prefix(opcode)
+		}
+	}
+
+	pub fn debug_step(&mut self) {
+		let opcode = self.peek(self.pc-1);
+
+		if opcode == 0xCB {
+			let opcode = self.pc_fetch();
+			self.execute_prefix(opcode);
+		} else { 
+			self.execute_no_prefix(opcode)
+		}
+
+		self.pc_fetch();
+	}
+
+	fn handle_interrupts(&mut self) {
+		let mut intf = self.bus.intf();
+
+		let mut pending_ints = (self.bus.inte & intf)
+			.iter().collect::<Vec<_>>();
+		pending_ints.reverse();
+
+		if let Some(int) = pending_ints.first() {
+			let addr = match *int {
+				IFlags::vblank => 0x40,
+				IFlags::lcd    => 0x48,
+				IFlags::timer  => 0x50,
+				IFlags::serial => 0x58, 
+				IFlags::joypad => 0x60,
+				_ => unreachable!(),
+			};
+
+			// 2 wait states are executed
+			self.tick();
+			self.tick();
+
+			self.stack_push(self.pc);
+			self.pc = addr;
+			self.tick();
+
+			intf.remove(*int);
+			self.bus.set_intf(intf);
+
+			self.ime = false;
+		}
+	}
+
 	fn hram(&self, offset: u8) -> u16 {
 		0xFF00 | offset as u16
 	}
 
 	fn immediate8(&mut self) -> u8 { self.pc_fetch() }
-	fn indirect_zero8(&mut self) -> u8 {
-		let offset = self.pc_fetch();
-		self.read(self.hram(offset))
-	}
 	fn indirect_abs8(&mut self) -> u8 {
 		let addr = self.pc_fetch16();
 		self.read(addr)
@@ -285,17 +249,8 @@ impl<M: Memory> Cpu<M> {
 	fn immediate16(&mut self) -> u16 {
 		self.pc_fetch16()
 	}
-	fn indirect_zero16(&mut self) -> u16 {
-		let offset = self.pc_fetch();
-		self.read16(self.hram(offset))
-	}
-	fn indirect_abs16(&mut self) -> u16 {
-		let addr = self.pc_fetch16();
-		self.read16(addr)
-	}
 
 	fn a(&mut self) -> u8 { self.a }
-	fn a16(&mut self) -> u16 { self.a as u16 }
 	fn b(&mut self) -> u8 { self.bc.hi() }
 	fn c(&mut self) -> u8 { self.bc.lo() }
 	fn c_indirect(&mut self) -> u8 {
@@ -328,17 +283,9 @@ impl<M: Memory> Cpu<M> {
 	fn de(&mut self) -> u16 { self.de.0 }
 	fn hl(&mut self) -> u16 { self.hl.0 }
 
-	fn set_indirect_zero8(&mut self, val: u8) {
-		let offset = self.pc_fetch();
-		self.write(self.hram(offset), val);
-	}
 	fn set_indirect_abs8(&mut self, val: u8) {
 		let addr = self.pc_fetch16();
 		self.write(addr, val);
-	}
-	fn set_indirect_zero16(&mut self, val: u16) {
-		let offset = self.pc_fetch();
-		self.write16(self.hram(offset), val);
 	}
 	fn set_indirect_abs16(&mut self, val: u16) {
 		let addr = self.pc_fetch16();
@@ -386,47 +333,57 @@ impl<M: Memory> Cpu<M> {
 	fn ncarry(&mut self) -> bool { !self.f.contains(Flags::c) }
 }
 
-type OpGet<M, T> = fn(&mut Cpu<M>) -> T;
-type OpSet<M, T> = fn(&mut Cpu<M>, T);
+type OpGet<T> = fn(&mut Cpu) -> T;
+type OpSet<T> = fn(&mut Cpu, T);
 
-impl<M: Memory> Cpu<M> {
+impl Cpu {
 	fn nop(&mut self) {}
 
-	fn ld<T>(&mut self, set: OpSet<M, T>, get: OpGet<M, T>) {
+	fn ld<T>(&mut self, set: OpSet<T>, get: OpGet<T>) {
 		let val = get(self);
 		set(self, val);
 	}
 
-	fn push(&mut self, get: OpGet<M, u16>) {
+	// 0xf9
+	fn ldhl(&mut self) {
+		self.sp = self.hl.0;
+		self.tick();
+	}
+
+	fn push(&mut self, get: OpGet<u16>) {
 		let val = get(self);
 		self.tick();
 		self.stack_push(val);
 	}
 
-	fn pop(&mut self, set: OpSet<M, u16>) {
+	fn pop(&mut self, set: OpSet<u16>) {
 		let val = self.stack_pop();
 		set(self, val);
 	}
 
 	// 0xf8
 	// https://stackoverflow.com/questions/5159603/gbz80-how-does-ld-hl-spe-affect-h-and-c-flags
-	fn ldsp(&mut self, set: OpSet<M, u16>, get: OpGet<M, u8>) {
-		let val = get(self);
-		let offset = val as i8;
+	fn ldsp(&mut self, set: OpSet<u16>, get: OpGet<u8>) {
+		let offset = get(self) as i8;
 		let res = self.sp.wrapping_add_signed(offset as i16);
 		
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
 
-		// Both of these set carry and half-carry based on the low byte of SP added to the UNSIGNED immediate byte.
-		self.set_carry((self.sp & 0xFF).wrapping_add(val as u16));
-		self.set_hcarry(self.sp as u8, val);
+		// TODO: probably not correct
+		if offset.is_negative() {
+			self.f.set(Flags::c, res & 0xFF <= self.sp & 0xFF);
+			self.f.set(Flags::h, res & 0xF <= self.sp & 0xF);
+		} else {
+			self.set_carry((self.sp & 0xFF).wrapping_add_signed(offset as i16));
+			self.set_hcarry(self.sp as u8, offset as u8);
+		}
 		
 		set(self, res);
 		self.tick();
 	}
 
-	fn add(&mut self, get: OpGet<M, u8>) {
+	fn add(&mut self, get: OpGet<u8>) {
 		let val = get(self);
 		let res = self.a as u16 + val as u16;
 		
@@ -438,13 +395,7 @@ impl<M: Memory> Cpu<M> {
 		self.a = res as u8;
 	}
 
-	// 0xf9
-	fn ldhl(&mut self) {
-		self.sp = self.hl.0;
-		self.tick();
-	}
-
-	fn adc(&mut self, get: OpGet<M, u8>) {
+	fn adc(&mut self, get: OpGet<u8>) {
 		let val = get(self);
 		let res = self.a as u16 
 			+ val as u16
@@ -458,7 +409,7 @@ impl<M: Memory> Cpu<M> {
 		self.a = res as u8;
 	}
 
-	fn sub(&mut self, get: OpGet<M, u8>) {
+	fn sub(&mut self, get: OpGet<u8>) {
 		let val = get(self);
 		let res = (self.a as u16).wrapping_sub(val as u16);
 		
@@ -470,7 +421,7 @@ impl<M: Memory> Cpu<M> {
 		self.a = res as u8;
 	}
 
-	fn sbc(&mut self, get: OpGet<M, u8>) {
+	fn sbc(&mut self, get: OpGet<u8>) {
 		let val = get(self);
 		let res = (self.a as u16)
 			.wrapping_sub(val as u16)
@@ -485,7 +436,7 @@ impl<M: Memory> Cpu<M> {
 		self.a = res as u8;
 	}
 
-	fn cp(&mut self, get: OpGet<M, u8>) {
+	fn cp(&mut self, get: OpGet<u8>) {
 		let val = get(self);
 		let res = (self.a as u16).wrapping_sub(val as u16);
 		
@@ -495,7 +446,7 @@ impl<M: Memory> Cpu<M> {
 		self.set_carry(res);
 	}
 
-	fn inc(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn inc(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		let val = get(self);
 		let res = val.wrapping_add(1);
 		
@@ -506,14 +457,14 @@ impl<M: Memory> Cpu<M> {
 		set(self, res);
 	}
 
-	fn inc16(&mut self, set: OpSet<M, u16>, get: OpGet<M, u16>) {
+	fn inc16(&mut self, set: OpSet<u16>, get: OpGet<u16>) {
 		let val = get(self);
 		let res = val.wrapping_add(1);
 		set(self, res);
 		self.tick();
 	}
 
-	fn dec(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn dec(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		let val = get(self);
 		let res = val.wrapping_sub(1);
 		
@@ -524,14 +475,14 @@ impl<M: Memory> Cpu<M> {
 		set(self, res);
 	}
 
-	fn dec16(&mut self, set: OpSet<M, u16>, get: OpGet<M, u16>) {
+	fn dec16(&mut self, set: OpSet<u16>, get: OpGet<u16>) {
 		let val = get(self);
 		let res = val.wrapping_sub(1);
 		set(self, res);
 		self.tick();
 	}
 
-	fn logical<F: Fn(u8, u8) -> u8>(&mut self, get: OpGet<M, u8>, f: F) {
+	fn logical<F: Fn(u8, u8) -> u8>(&mut self, get: OpGet<u8>, f: F) {
 		let val = get(self);
 		let res = f(self.a, val);
 
@@ -541,17 +492,17 @@ impl<M: Memory> Cpu<M> {
 		self.a = res;
 	}
 
-	fn and(&mut self, get: OpGet<M, u8>) {
+	fn and(&mut self, get: OpGet<u8>) {
 		self.logical(get, u8::bitand);
 		self.f.insert(Flags::h);
 	}
 
-	fn or(&mut self, get: OpGet<M, u8>) {
+	fn or(&mut self, get: OpGet<u8>) {
 		self.logical(get, u8::bitor);
 		self.f.remove(Flags::h);
 	}
 
-	fn xor(&mut self, get: OpGet<M, u8>) {
+	fn xor(&mut self, get: OpGet<u8>) {
 		self.logical(get, u8::bitxor);
 		self.f.remove(Flags::h);
 	}
@@ -603,7 +554,7 @@ impl<M: Memory> Cpu<M> {
 		self.f.insert(Flags::h);
 	}
 
-	fn addhl(&mut self, get: OpGet<M, u16>) {
+	fn addhl(&mut self, get: OpGet<u16>) {
 		let val = get(self);
 		let res = self.hl.0 as u32 + val as u32;
 
@@ -617,17 +568,21 @@ impl<M: Memory> Cpu<M> {
 
 	// 0xe8
 	// https://stackoverflow.com/questions/5159603/gbz80-how-does-ld-hl-spe-affect-h-and-c-flags
-	fn addsp(&mut self, get: OpGet<M, u8>) {
-		let val = get(self);
-		let offset = val as i8;
+	fn addsp(&mut self, get: OpGet<u8>) {
+		let offset = get(self) as i8;
 		let res = self.sp.wrapping_add_signed(offset as i16);
 		
 		self.f.remove(Flags::z);
 		self.f.remove(Flags::n);
 
-		// Both of these set carry and half-carry based on the low byte of SP added to the UNSIGNED immediate byte.
-		self.set_carry((self.sp & 0xFF).wrapping_add(val as u16));
-		self.set_hcarry(self.sp as u8, val);
+		// TODO: probably not correct
+		if offset.is_negative() {
+			self.f.set(Flags::c, res & 0xFF <= self.sp & 0xFF);
+			self.f.set(Flags::h, res & 0x0F <= self.sp & 0x0F);
+		} else {
+			self.set_carry((self.sp & 0xFF).wrapping_add_signed(offset as i16));
+			self.set_hcarry(self.sp as u8, offset as u8);
+		}
 		
 		self.tick();
 		self.tick();
@@ -658,7 +613,7 @@ impl<M: Memory> Cpu<M> {
 	}
 
 
-	fn shift<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>, f: FS, carry: FB) {
+	fn shift<FS: Fn(u8) -> u8, FB: Fn(u8) -> bool>(&mut self, set: OpSet<u8>, get: OpGet<u8>, f: FS, carry: FB) {
 		let val = get(self);
 		let res = f(val);
 
@@ -670,37 +625,37 @@ impl<M: Memory> Cpu<M> {
 		set(self, res);
 	}
 
-	fn rlc(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn rlc(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		self.shift(set, get, |val| val.rotate_left(1), msb);
 	}
 
-	fn rrc(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn rrc(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		self.shift(set, get, |val| val.rotate_right(1), lsb);
 	}
 
-	fn rl(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn rl(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		let carry = self.f.contains(Flags::c) as u8;
 		self.shift(set, get, |val| val.shl(1) | carry, msb);
 	}
 
-	fn rr(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn rr(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		let carry = self.f.contains(Flags::c) as u8;
 		self.shift(set, get, |val| (carry << 7) | val.shr(1), lsb);
 	}
 
-	fn sla(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn sla(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		self.shift(set, get, |val| val.shl(1), msb);
 	}
 
-	fn sra(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn sra(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		self.shift(set, get, |val| (val & 0b1000_0000) | val.shr(1), lsb);
 	}
 
-	fn srl(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn srl(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		self.shift(set, get, |val| val.shr(1), lsb);
 	}
 
-	fn swap(&mut self, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn swap(&mut self, set: OpSet<u8>, get: OpGet<u8>) {
 		let val = get(self);
 		let low = val & 0b0000_1111;
 		let high = val & 0b1111_0000;
@@ -714,7 +669,7 @@ impl<M: Memory> Cpu<M> {
 		set(self, res);
 	}
 
-	fn bit(&mut self, bit: u8, get: OpGet<M, u8>) {
+	fn bit(&mut self, bit: u8, get: OpGet<u8>) {
 		let val = get(self);
 		let res = val & (1 << bit);
 
@@ -723,19 +678,19 @@ impl<M: Memory> Cpu<M> {
 		self.f.insert(Flags::h);
 	}
 
-	fn res(&mut self, bit: u8, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn res(&mut self, bit: u8, set: OpSet<u8>, get: OpGet<u8>) {
 		let val = get(self);
 		let res = val & !(1 << bit);
 		set(self, res);
 	}
 
-	fn set(&mut self, bit: u8, set: OpSet<M, u8>, get: OpGet<M, u8>) {
+	fn set(&mut self, bit: u8, set: OpSet<u8>, get: OpGet<u8>) {
 		let val = get(self);
 		let res = val | (1 << bit);
 		set(self, res);
 	}
 
-	fn jp(&mut self, get: OpGet<M, u16>) {
+	fn jp(&mut self, get: OpGet<u16>) {
 		let addr = get(self);
 		self.pc = addr;
 		self.tick();
@@ -746,7 +701,7 @@ impl<M: Memory> Cpu<M> {
 		self.pc = self.hl.0;
 	}
 
-	fn jpc(&mut self, cond: OpGet<M, bool>, get: OpGet<M, u16>) {
+	fn jpc(&mut self, cond: OpGet<bool>, get: OpGet<u16>) {
 		let addr = get(self);
 		if cond(self) {
 			self.pc = addr;
@@ -754,13 +709,13 @@ impl<M: Memory> Cpu<M> {
 		}
 	}
 
-	fn jr(&mut self, get: OpGet<M, u8>) {
+	fn jr(&mut self, get: OpGet<u8>) {
 		let offset = get(self) as i8;
 		self.pc = self.pc.wrapping_add_signed(offset as i16);
 		self.tick();
 	}
 
-	fn jrc(&mut self, cond: OpGet<M, bool>, get: OpGet<M, u8>) {
+	fn jrc(&mut self, cond: OpGet<bool>, get: OpGet<u8>) {
 		let offset = get(self) as i8;
 		if cond(self) {
 			self.pc = self.pc.wrapping_add_signed(offset as i16);
@@ -768,14 +723,14 @@ impl<M: Memory> Cpu<M> {
 		}
 	}
 
-	fn call(&mut self, get: OpGet<M, u16>) {
+	fn call(&mut self, get: OpGet<u16>) {
 		let addr = get(self);
 		self.tick();
 		self.stack_push(self.pc);
 		self.pc = addr;
 	}
 
-	fn callc(&mut self, cond: OpGet<M, bool>, get: OpGet<M, u16>) {
+	fn callc(&mut self, cond: OpGet<bool>, get: OpGet<u16>) {
 		let addr = get(self);
 
 		if cond(self) {
@@ -790,7 +745,7 @@ impl<M: Memory> Cpu<M> {
 		self.tick();
 	}
 
-	fn retc(&mut self, cond: OpGet<M, bool>,) {
+	fn retc(&mut self, cond: OpGet<bool>,) {
 		self.tick();
 		if cond(self) {
 			self.pc = self.stack_pop();
@@ -813,22 +768,23 @@ impl<M: Memory> Cpu<M> {
 	fn di(&mut self) { self.ime = false; self.ime_to_set = false; }
 	fn ei(&mut self) { self.ime_to_set = true; }
 
-	fn stop(&mut self, _get: OpGet<M, u8>) {
-		self.halted = true;
-		eprintln!("STOP not implemented");
+	// TODO
+	fn stop(&mut self, _get: OpGet<u8>) {
+		eprintln!("Stop instruction not implemented")
 	}
 
 	fn halt(&mut self) {
-		if !self.ime && !self.bus.has_pending_interrupts() {
-			self.halt_bug = true;
+		// halt bug
+		if !self.ime {
+			self.halt_bug = self.bus.has_pending_interrupts();
+		} else {
+			self.halted = true;
 		}
-		
-		self.halted = true;
 	}
 }
 
 
-impl<M: Memory> Cpu<M> {
+impl Cpu {
   fn execute_no_prefix(&mut self, opcode: u8) {
 		match opcode {
 			0x00 => self.nop(),
@@ -1051,7 +1007,7 @@ impl<M: Memory> Cpu<M> {
 			0xDC => self.callc(Self::carry,Self::immediate16),
 			0xDE => self.sbc(Self::immediate8),
 			0xDF => self.rst(0x18),
-			0xE0 => self.ld(Self::set_indirect_zero8,Self::a),
+			0xE0 => self.ld(Self::set_indirect_abs8,Self::a),
 			0xE1 => self.pop(Self::set_hl),
 			0xE2 => self.ld(Self::set_c_indirect,Self::a),
 			0xE5 => self.push(Self::hl),
@@ -1059,10 +1015,10 @@ impl<M: Memory> Cpu<M> {
 			0xE7 => self.rst(0x20),
 			0xE8 => self.addsp(Self::immediate8),
 			0xE9 => self.jphl(),
-			0xEA => self.ld(Self::set_indirect_abs16,Self::a16),
+			0xEA => self.ld(Self::set_indirect_abs8,Self::a),
 			0xEE => self.xor(Self::immediate8),
 			0xEF => self.rst(0x28),
-			0xF0 => self.ld(Self::set_a,Self::indirect_zero8),
+			0xF0 => self.ld(Self::set_a,Self::indirect_abs8),
 			0xF1 => self.pop(Self::set_af),
 			0xF2 => self.ld(Self::set_a,Self::c_indirect),
 			0xF3 => self.di(),

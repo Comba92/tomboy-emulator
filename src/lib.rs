@@ -1,6 +1,7 @@
 pub mod gb;
 
 pub mod cpu;
+pub mod mem;
 pub mod instr;
 
 pub mod bus;

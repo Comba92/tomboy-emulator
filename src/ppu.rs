@@ -161,6 +161,8 @@ impl Ppu {
       mode: Default::default(),
       frame_ready: None,
 
+      // ctrl: Ctrl::from_bits_retain(0x91),
+      // stat: Stat::from_bits_retain(0x81),
       ctrl: Ctrl::lcd_enabled,
       stat: Stat::empty(),
 
@@ -190,8 +192,6 @@ impl Ppu {
         self.frame_ready = Some(());
       }
     }
-
-    let old_stat = self.stat;
 
     self.tcycles += 1;
     if self.tcycles > 456 {
@@ -282,10 +282,7 @@ impl Ppu {
       0xFF47 => self.bgp,
       0xFF48 => self.obp0,
       0xFF49 => self.obp1,
-      _ => {
-        eprintln!("Ppu register read {addr:04X} not implemented");
-        0
-      }
+      _ => 0xFF
     }
   }
 
@@ -339,7 +336,7 @@ impl Ppu {
       0xFF47 => self.bgp = val,
       0xFF48 => self.obp0 = val,
       0xFF49 => self.obp1 = val,
-      _ => eprintln!("Ppu register write {addr:04X} not implemented"),
+      _ => {}
     }
   }
 

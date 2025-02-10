@@ -1,7 +1,7 @@
 use crate::{apu::Apu, bus::Bus, cart::CartHeader, cpu::Cpu, frame::FrameBuffer, joypad::Joypad, mbc::Cart, ppu::Ppu};
 
 pub struct Gameboy {
-  cpu: Cpu
+  cpu: Cpu<Bus>
 }
 
 impl Gameboy {
@@ -29,7 +29,7 @@ impl Gameboy {
     &mut self.cpu.bus
   }
 
-  pub fn get_cpu(&mut self) -> &mut Cpu {
+  pub fn get_cpu(&mut self) -> &mut Cpu<Bus> {
     &mut self.cpu
   }
 

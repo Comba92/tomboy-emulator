@@ -5,7 +5,7 @@ mod cpu_step_tests {
 
     use prettydiff::diff_words;
     use serde::Deserialize;
-    use tomboy_emulator::{cpu::{self, Cpu}, instr::INSTRUCTIONS};
+    use tomboy_emulator::{cpu::{self, Cpu}, instr::INSTRUCTIONS, mem::Ram64kb};
 
   #[derive(Deserialize, Debug, PartialEq, Eq)]
   struct CpuMock {
@@ -19,7 +19,7 @@ mod cpu_step_tests {
     }
   }
   impl CpuMock {
-    fn from_cpu(cpu: &Cpu) -> Self {
+    fn from_cpu(cpu: &Cpu<Ram64kb>) -> Self {
       Self {
         pc: cpu.pc, sp: cpu.sp, 
         a: cpu.a, b: cpu.bc.hi(), c: cpu.bc.lo(), 
@@ -30,8 +30,8 @@ mod cpu_step_tests {
     }
   }
 
-  fn cpu_from_mock(mock: &CpuMock) -> Cpu {
-    let mut cpu = Cpu::new();
+  fn cpu_from_mock(mock: &CpuMock) -> Cpu<Ram64kb> {
+    let mut cpu = Cpu::with_ram64kb();
 
     cpu.a = mock.a;
     cpu.f = cpu::Flags::from_bits_retain(mock.f);
@@ -97,9 +97,6 @@ fn cpu_test() {
     let tests: Vec<Test> = serde_json::from_slice(&json_test).expect("couldn't parse json");
 
     println!("Testing file {i}: {:?}", f.file_name());
-    // if f.file_name() == "10.json" || f.file_name() == "e8.json" || f.file_name() == "f8.json" { continue; }
-    if f.file_name() != "e8.json" || f.file_name() != "f8.json" { continue; }
-
 
     'testing: for test in tests.iter() {
       let mut cpu = cpu_from_mock(&test.start);

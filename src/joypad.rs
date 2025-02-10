@@ -4,7 +4,7 @@ use crate::bus;
 
 bitflags! {
   pub struct Flags: u8 {
-    const unused     = 0b1111_0000;
+    const unused     = 0b1100_0000;
     const start_down = 0b0000_1000;
     const select_up  = 0b0000_0100;
     const b_left     = 0b0000_0010;
@@ -12,7 +12,7 @@ bitflags! {
   }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum JoypadSelect { None, Dpad, Buttons, Both }
 pub struct Joypad {
   selected: JoypadSelect,
@@ -57,13 +57,13 @@ impl Joypad {
 
   pub fn read(&self) -> u8 {
     let res = match self.selected {
-      JoypadSelect::Both => 0,
-      JoypadSelect::Dpad => self.dpad.bits() & 0b1111,
-      JoypadSelect::Buttons => self.buttons.bits() & 0b1111,
-      _ => 0x0F,
+      JoypadSelect::Both => 0b1100_0000 | (self.dpad.bits() & 0b1111) | (self.buttons.bits() & 0b1111),
+      JoypadSelect::Dpad    => 0b1101_0000 | (self.dpad.bits() & 0b1111),
+      JoypadSelect::Buttons => 0b1110_0000 | (self.buttons.bits() & 0b1111),
+      _ => 0b1100_1111,
     };
 
-    res | Flags::unused.bits()
+    res
   }
 
   pub fn write(&mut self, val: u8) {

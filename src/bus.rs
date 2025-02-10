@@ -1,6 +1,6 @@
 use std::{cell::Cell, rc::Rc};
 
-use crate::{apu::Apu, joypad::Joypad, mbc::Cart, ppu::Ppu, serial::Serial, timer::Timer};
+use crate::{apu::Apu, joypad::Joypad, mbc::Cart, mem::Memory, ppu::Ppu, serial::Serial, timer::Timer};
 use bitflags::bitflags;
 
 bitflags! {
@@ -50,7 +50,8 @@ pub struct Bus {
   ram: [u8; 8*1024],
   hram: [u8; 0x7F],
   dma: Dma,
-  
+
+  bootrom: Option<Vec<u8>>,
   pub cart: Cart,
   pub ppu: Ppu,
   pub timer: Timer,
@@ -64,7 +65,7 @@ pub struct Bus {
 }
 
 enum BusTarget {
-  Rom, VRam, OamDma, ExRam, WRam, Oam, Unusable, 
+  Rom, VRam, OamDma, ExRam, WRam, Oam, Unusable, Boot,
   Joypad, Serial, Ppu, Apu, Timer, NoImpl, HRam, IF, IE,
 }
 
@@ -85,7 +86,8 @@ fn map_addr(addr: u16) -> (BusTarget, u16) {
     0xFF0F => (IF, addr),
     0xFF10..=0xFF3F => (Apu, addr),
     0xFF46 => (OamDma, addr),
-    0xFF40..=0xFF4B => (Ppu, addr),
+    0xFF40..=0xFF4B | 0xFF4F => (Ppu, addr),
+    0xFF50 => (Boot, addr),
     0xFF80..=0xFFFE => (HRam, addr - 0xFF80),
     0xFFFF => (IE, addr),
     _ => (NoImpl, addr),
@@ -98,15 +100,96 @@ pub fn send_interrupt(intf: &Cell<IFlags>, int: IFlags) {
   intf.set(flags);
 }
 
+impl Memory for Bus {
+  fn read(&mut self, addr: u16) -> u8 {
+    let (target, addr) = map_addr(addr);
+    use BusTarget::*;
+    match &target {
+      Rom => self.cart.rom_read(addr),
+      VRam => self.ppu.vram[addr as usize],
+      ExRam => self.cart.ram_read(addr),
+      WRam => self.ram[addr as usize],
+      Oam => self.ppu.oam[addr as usize],
+      Joypad => self.joypad.read(),
+      Serial => self.serial.read(addr),
+      // Apu => self.apu.read(addr),
+      Ppu => self.ppu.read(addr),
+      Timer => self.timer.read(addr),
+      IF => (self.intf.get() | IFlags::unused).bits(),
+      HRam => self.hram[addr as usize],
+      IE => self.inte.bits(),
+      _ => 0,
+    }
+  }
+
+  fn write(&mut self, addr: u16, val: u8) {
+    let (target, addr) = map_addr(addr);
+    use BusTarget::*;
+    match &target {
+      Rom => self.cart.rom_write(addr, val),
+      VRam => self.ppu.vram[addr as usize] = val,
+      ExRam => self.cart.ram_write(addr, val),
+      WRam => self.ram[addr as usize] = val,
+      Oam => self.ppu.oam[addr as usize] = val,
+      Unusable => {}
+      Joypad => self.joypad.write(val),
+      Serial => self.serial.write(addr, val),
+      // Apu =>  self.apu.write(addr, val),
+      Ppu => self.ppu.write(addr, val),
+      OamDma => {
+        self.dma.init(val);
+        for _ in 0..4 { self.tick(); }
+      }
+      Timer => {
+        self.timer.write(addr, val);
+        if self.timer.div == 0 {
+          // self.apu.tcycles = 0;
+        }
+      }
+      Boot => {
+        if let Some(data) = self.bootrom.take() {
+          self.cart.rom[..256].copy_from_slice(&data);
+        }
+      }
+      IF => self.intf.set(IFlags::from_bits_truncate(val)),
+      HRam => self.hram[addr as usize] = val,
+      IE => self.inte = IFlags::from_bits_truncate(val),
+      Apu | NoImpl => {},
+    }
+  }
+
+  fn tick(&mut self) {
+    self.tcycles += 1;
+    for _ in 0..4 { self.ppu.tick(); }
+    for _ in 0..4 { self.timer.tick(); }
+    for _ in 0..4 { self.apu.tick(); }
+  }
+
+  fn halt_tick(&mut self) {
+    self.tick();
+    self.handle_dma();
+  }
+
+  fn has_pending_interrupts(&self) -> bool {
+    !(self.inte & self.intf()).is_empty()
+  }
+}
+
 impl Bus {
-  pub fn new(cart: Cart) -> Bus {
+  pub fn new(mut cart: Cart) -> Bus {
     let intf = Rc::new(Cell::new(IFlags::empty()));
+    let bootrom = Some(cart.rom[..256].to_vec());
+    
+    // TODO: remove this hardcoding
+    // cart.rom[..256]
+    //   .copy_from_slice(include_bytes!("../bootroms/dmg_boot.bin"));
 
     Self {
       ram: [0; 8*1024],
       hram: [0; 0x7F],
       dma: Dma::default(),
 
+      bootrom,
       cart,
       ppu: Ppu::new(intf.clone()),
       apu: Apu::default(),
@@ -119,17 +202,6 @@ impl Bus {
     }
   }
 
-  pub fn tick(&mut self) {
-    self.tcycles += 1;
-    for _ in 0..4 { self.ppu.tick(); }
-    for _ in 0..4 { self.timer.tick(); }
-    for _ in 0..4 { self.apu.tick(); }
-  }
-
-  pub fn has_pending_interrupts(&self) -> bool {
-    !(self.inte & self.intf()).is_empty()
-  }
-
   pub fn handle_dma(&mut self) {
     if self.dma.delay {
       self.dma.delay = false;
@@ -140,58 +212,6 @@ impl Bus {
       self.ppu.oam[self.dma.offset() as usize] = val;
 
       self.dma.advance();
-    }
-  }
-
-  pub fn read(&mut self, addr: u16) -> u8 {
-    let (target, addr) = map_addr(addr);
-    use BusTarget::*;
-    match &target {
-      Rom => self.cart.rom_read(addr),
-      VRam => self.ppu.vram[addr as usize],
-      ExRam => self.cart.ram_read(addr),
-      WRam => self.ram[addr as usize],
-      Oam => self.ppu.oam[addr as usize],
-      Joypad => self.joypad.read(),
-      Serial => self.serial.read(addr),
-      Apu => self.apu.read(addr),
-      Ppu => self.ppu.read(addr),
-      Timer => self.timer.read(addr),
-      IF => (self.intf.get() | IFlags::unused).bits(),
-      HRam => self.hram[addr as usize],
-      IE => self.inte.bits(),
-      _ => 0,
-    }
-  }
-
-  pub fn write(&mut self, addr: u16, val: u8) {
-    let (target, addr) = map_addr(addr);
-    use BusTarget::*;
-    match &target {
-      Rom => self.cart.rom_write(addr, val),
-      VRam => self.ppu.vram[addr as usize] = val,
-      ExRam => self.cart.ram_write(addr, val),
-      WRam => self.ram[addr as usize] = val,
-      Oam => self.ppu.oam[addr as usize] = val,
-      Unusable => {}
-      Joypad => self.joypad.write(val),
-      Serial => self.serial.write(addr, val),
-      Apu =>  self.apu.write(addr, val),
-      Ppu => self.ppu.write(addr, val),
-      OamDma => {
-        self.dma.init(val);
-        for _ in 0..4 { self.tick(); }
-      }
-      Timer => {
-        self.timer.write(addr, val);
-        if self.timer.div == 0 {
-          self.apu.tcycles = 0;
-        }
-      }
-      IF => self.intf.set(IFlags::from_bits_truncate(val)),
-      HRam => self.hram[addr as usize] = val,
-      IE => self.inte = IFlags::from_bits_truncate(val),
-      NoImpl => {},
     }
   }
 
